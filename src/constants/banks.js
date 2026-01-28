@@ -1,0 +1,22 @@
+export const BANK_LOGOS = {
+    "PRIMAL": "/bank/Piramal_Finance_logo.svg",
+    "CHOLA": "/bank/chola logo.png",
+    "ADITYA BIRLA": "/bank/aditya birla.jpg.jpeg",
+    "TATA CAPITAL": "/bank/tata capital.png",
+    "BAJAJ": "/bank/Bajaj_Finserv_1_wgCzF5w_hWZe670.jpg.jpeg",
+    "POONAWALA": "/bank/Poonawalla-Fincorp.avif",
+    "INCRED/FINABLE": "/bank/incred.png",
+    "SMFG": "/bank/smfg.png",
+    "AXIS FINANCE": "/bank/axis finance.png",
+    "IDFC BANK": "/bank/idfc logo .png",
+    "ICICI BANK": "/bank/icici.png",
+    "YES BANK": "/bank/yes bank logo .png",
+    "HDFC BANK": "/bank/hdfc logo.png",
+    "AXIS BANK": "/bank/201800-axis-bank.avif",
+    "INDUSIND": "/bank/IndusIndBankJPEGlogo.jpg.jpeg",
+    "L&T FINANCE": "/bank/l-and-t-finance-ltd-lalbagh-road-bangalore-financial-institutions-1n3qsr0fxn.avif",
+    "SRIRAM": "/bank/smfg.png",
+    "UTKARSH": "/bank/utkarsh-small-finance-bank-logo.jpg",
+};
+
+export const ALL_BANKS = Object.keys(BANK_LOGOS);

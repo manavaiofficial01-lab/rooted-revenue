@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabase';
+import { BANK_LOGOS } from '../constants/banks';
 
 const AdminDashboard = ({ onLogout }) => {
     const QUESTION_MAP = {
@@ -32,6 +33,11 @@ const AdminDashboard = ({ onLogout }) => {
     const [showNotificationModal, setShowNotificationModal] = useState(false);
     const [notificationForm, setNotificationForm] = useState({ target: 'all', message: '', type: 'info' });
     const [sendingNotification, setSendingNotification] = useState(false);
+    const [sentNotifications, setSentNotifications] = useState([]);
+
+    // Custom Dropdown States
+    const [showAudienceDropdown, setShowAudienceDropdown] = useState(false);
+    const [showPriorityDropdown, setShowPriorityDropdown] = useState(false);
 
     const [userForm, setUserForm] = useState({ username: '', email: '', password: '', role: 'Agent', phone: '' });
     const [searchQuery, setSearchQuery] = useState('');
@@ -40,7 +46,41 @@ const AdminDashboard = ({ onLogout }) => {
 
     useEffect(() => {
         fetchData();
+        fetchSentNotifications();
+
+        // Polling for data and engagement tracking every 5 minutes
+        const pollInterval = setInterval(() => {
+            fetchData();
+            fetchSentNotifications();
+        }, 5 * 60 * 1000); // 300,000ms
+
+        return () => clearInterval(pollInterval);
     }, []);
+
+    const fetchSentNotifications = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('notifications')
+                .select('*, notification_reads(*)')
+                .order('created_at', { ascending: false })
+                .limit(20);
+            if (error) throw error;
+            setSentNotifications(data || []);
+        } catch (err) {
+            console.error('Failed to fetch notifications:', err);
+        }
+    };
+
+    const handleDeleteNotification = async (id) => {
+        if (!confirm('Are you sure you want to retract this broadcast? This will remove it for all agents.')) return;
+        try {
+            const { error } = await supabase.from('notifications').delete().eq('id', id);
+            if (error) throw error;
+            setSentNotifications(prev => prev.filter(n => n.id !== id));
+        } catch (err) {
+            alert(err.message);
+        }
+    };
 
     const toggleTheme = () => {
         const newTheme = theme === 'dark' ? 'light' : 'dark';
@@ -334,7 +374,10 @@ const AdminDashboard = ({ onLogout }) => {
                             {filteredEmployees.map(emp => (
                                 <div key={emp.id} className="employee-card interactive" onClick={() => handleEmployeeClick(emp)}>
                                     <div className="emp-top">
-                                        <div className="emp-avatar">{emp.username.charAt(0)}</div>
+                                        <div className="emp-avatar">
+                                            {emp.username.charAt(0)}
+                                            <div className="online-dot"></div>
+                                        </div>
                                         <div className="emp-info">
                                             <h3>{emp.username}</h3>
                                             <span>{emp.email}</span>
@@ -560,7 +603,9 @@ const AdminDashboard = ({ onLogout }) => {
                             {filteredPolicies.map(p => (
                                 <div key={p.id} className="policy-card interactive" onClick={() => handleOpenPolicy(p)}>
                                     <div className="p-card-head">
-                                        <div className="bank-avatar">{p.bank_name?.charAt(0)}</div>
+                                        <div className="bank-avatar">
+                                            {BANK_LOGOS[p.bank_name] ? <img src={BANK_LOGOS[p.bank_name]} alt={p.bank_name} /> : p.bank_name?.charAt(0)}
+                                        </div>
                                         <div className="bank-info">
                                             <h3>{p.bank_name}</h3>
                                             <span>Min Income: ₹{p.income}</span>
@@ -668,104 +713,261 @@ const AdminDashboard = ({ onLogout }) => {
                     <div className="admin-view">
                         <header className="view-head">
                             <div className="head-text">
-                                <h1>Announcements</h1>
-                                <p>Dispatch real-time notifications to specific agents or the entire office.</p>
+                                <h1>Communication Hub</h1>
+                                <p>Orchestrate office-wide broadcasts and track engagement in real-time.</p>
                             </div>
                         </header>
 
-                        <div className="announcement-composer glass-card">
-                            <div className="composer-intro">
-                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.5 1.5" /><path d="M7 11l5-5" /></svg>
-                                <h3>Create New Broadcast</h3>
-                                <p>Notifications will appear as instantaneous toasters in the agent's viewport.</p>
+                        <div className="notifications-layout">
+                            {/* Composer Side */}
+                            <div className="composer-container glass-card">
+                                <div className="composer-head">
+                                    <div className="c-icon-bg">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.5 1.5" /><path d="M7 11l5-5" /></svg>
+                                    </div>
+                                    <div className="c-title">
+                                        <h3>New Broadcast</h3>
+                                        <p>Reach your team instantly</p>
+                                    </div>
+                                </div>
+
+                                <form className="broadcast-form-premium" onSubmit={async (e) => {
+                                    e.preventDefault();
+                                    setSendingNotification(true);
+                                    try {
+                                        const { data, error } = await supabase.from('notifications').insert([{
+                                            message: notificationForm.message,
+                                            target_username: notificationForm.target === 'all' ? null : notificationForm.target,
+                                            is_global: notificationForm.target === 'all',
+                                            type: notificationForm.type,
+                                            created_by: 'Admin'
+                                        }]).select();
+
+                                        if (error) throw error;
+                                        setNotificationForm({ ...notificationForm, message: '' });
+                                        fetchSentNotifications();
+                                    } catch (err) {
+                                        alert(err.message);
+                                    } finally {
+                                        setSendingNotification(false);
+                                    }
+                                }}>
+                                    <div className="form-row-n">
+                                        <div className="input-group-n">
+                                            <label>Audience Target</label>
+                                            <div className="custom-dropdown-wrap">
+                                                <div className={`custom-select-trigger ${showAudienceDropdown ? 'active' : ''}`} onClick={() => { setShowAudienceDropdown(!showAudienceDropdown); setShowPriorityDropdown(false); }}>
+                                                    <span>{notificationForm.target === 'all' ? 'Global (All Office)' : notificationForm.target}</span>
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
+                                                </div>
+                                                {showAudienceDropdown && (
+                                                    <div className="custom-options-panel animate-pop">
+                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, target: 'all' }); setShowAudienceDropdown(false); }}>Global (All Office)</div>
+                                                        {employees.map(emp => (
+                                                            <div key={emp.id} className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, target: emp.username }); setShowAudienceDropdown(false); }}>{emp.username}</div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="input-group-n">
+                                            <label>Priority Level</label>
+                                            <div className="custom-dropdown-wrap">
+                                                <div className={`custom-select-trigger ${showPriorityDropdown ? 'active' : ''}`} onClick={() => { setShowPriorityDropdown(!showPriorityDropdown); setShowAudienceDropdown(false); }}>
+                                                    <span className={`p-indicator ${notificationForm.type}`}></span>
+                                                    <span>{notificationForm.type.charAt(0).toUpperCase() + notificationForm.type.slice(1)}</span>
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
+                                                </div>
+                                                {showPriorityDropdown && (
+                                                    <div className="custom-options-panel animate-pop">
+                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'info' }); setShowPriorityDropdown(false); }}><span className="p-indicator info"></span> Information</div>
+                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'success' }); setShowPriorityDropdown(false); }}><span className="p-indicator success"></span> Success Event</div>
+                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'warning' }); setShowPriorityDropdown(false); }}><span className="p-indicator warning"></span> System Alert</div>
+                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'error' }); setShowPriorityDropdown(false); }}><span className="p-indicator error"></span> Emergency</div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="input-group-n full" style={{ marginTop: '0.5rem' }}>
+                                        <label>Broadcast Message</label>
+                                        <textarea
+                                            rows="5"
+                                            placeholder="Write something professional or urgent..."
+                                            value={notificationForm.message}
+                                            onChange={(e) => setNotificationForm({ ...notificationForm, message: e.target.value })}
+                                            required
+                                        ></textarea>
+                                    </div>
+                                    <div className="dispatch-action-area">
+                                        <button className="premium-dispatch-btn" disabled={sendingNotification}>
+                                            <span>{sendingNotification ? 'Processing...' : 'Dispatch Announcement'}</span>
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                                        </button>
+                                    </div>
+                                </form>
                             </div>
 
-                            <form className="broadcast-form" onSubmit={async (e) => {
-                                e.preventDefault();
-                                setSendingNotification(true);
-                                try {
-                                    const { error } = await supabase.from('notifications').insert([{
-                                        message: notificationForm.message,
-                                        target_username: notificationForm.target === 'all' ? null : notificationForm.target,
-                                        is_global: notificationForm.target === 'all',
-                                        type: notificationForm.type,
-                                        created_by: 'Admin'
-                                    }]);
-                                    if (error) throw error;
-                                    alert('Notification dispatched successfully!');
-                                    setNotificationForm({ ...notificationForm, message: '' });
-                                } catch (err) {
-                                    alert(err.message);
-                                } finally {
-                                    setSendingNotification(false);
-                                }
-                            }}>
-                                <div className="form-grid-n">
-                                    <div className="modal-input">
-                                        <label>Target Audience</label>
-                                        <select
-                                            value={notificationForm.target}
-                                            onChange={(e) => setNotificationForm({ ...notificationForm, target: e.target.value })}
-                                            className="premium-select"
-                                        >
-                                            <option value="all">All Agents (Global)</option>
-                                            {employees.map(emp => (
-                                                <option key={emp.id} value={emp.username}>{emp.username}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    <div className="modal-input">
-                                        <label>Priority Level</label>
-                                        <select
-                                            value={notificationForm.type}
-                                            onChange={(e) => setNotificationForm({ ...notificationForm, type: e.target.value })}
-                                            className="premium-select"
-                                        >
-                                            <option value="info">Information (Blue)</option>
-                                            <option value="success">Success (Green)</option>
-                                            <option value="warning">Alert (Orange)</option>
-                                            <option value="error">Emergency (Red)</option>
-                                        </select>
-                                    </div>
+                            {/* Tracking Side */}
+                            <div className="tracking-container glass-card">
+                                <div className="tracking-head">
+                                    <h3>Engagement Tracker</h3>
+                                    <button className="refresh-mini" onClick={fetchSentNotifications} title="Refresh Live Status">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
+                                    </button>
                                 </div>
-                                <div className="modal-input">
-                                    <label>Message Content</label>
-                                    <textarea
-                                        rows="4"
-                                        placeholder="Type your message here..."
-                                        value={notificationForm.message}
-                                        onChange={(e) => setNotificationForm({ ...notificationForm, message: e.target.value })}
-                                        required
-                                    ></textarea>
+
+                                <div className="sent-notif-list">
+                                    {sentNotifications.length === 0 ? (
+                                        <div className="empty-tracking">
+                                            <p>No messages dispatched in the last 24h.</p>
+                                        </div>
+                                    ) : (
+                                        sentNotifications.map(sn => {
+                                            const readCount = sn.notification_reads?.length || 0;
+                                            const totalTarget = sn.is_global ? employees.length : 1;
+                                            return (
+                                                <div key={sn.id} className={`sent-notif-card ${sn.type}`}>
+                                                    <div className="sn-top">
+                                                        <span className="sn-type">{sn.is_global ? 'OFFICE BROADCAST' : `TARGET: ${sn.target_username}`}</span>
+                                                        <div className="sn-top-actions">
+                                                            {!sn.is_global && (
+                                                                <div className={`status-tag-mini ${sn.status}`}>
+                                                                    {sn.status === 'sent' && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
+                                                                    {sn.status === 'received' && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /></svg>}
+                                                                    {sn.status === 'seen' && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>}
+                                                                    <span>{sn.status}</span>
+                                                                </div>
+                                                            )}
+                                                            <div className="read-status-badge">
+                                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                                                                <span>{readCount}/{totalTarget} Seen</span>
+                                                            </div>
+                                                            <button className="del-btn-mini" onClick={() => handleDeleteNotification(sn.id)}>
+                                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <p className="sn-msg">{sn.message}</p>
+                                                    <div className="sn-details">
+                                                        <span className="sn-time">{new Date(sn.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                                        <div className="viewer-dots">
+                                                            {sn.notification_reads?.map(r => (
+                                                                <div key={r.id} className="v-dot" title={`${r.username} viewed at ${new Date(r.read_at).toLocaleTimeString()}`}>
+                                                                    {r.username.charAt(0).toUpperCase()}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
                                 </div>
-                                <button className="dispatch-btn" disabled={sendingNotification}>
-                                    {sendingNotification ? 'Dispatching...' : 'Broadcast Notification'}
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                                </button>
-                            </form>
+                            </div>
                         </div>
 
                         <style>{`
-                            .announcement-composer { max-width: 600px; margin: 0 auto; padding: 3rem; }
-                            .composer-intro { text-align: center; margin-bottom: 2.5rem; }
-                            .composer-intro svg { color: var(--primary); margin-bottom: 1.5rem; }
-                            .composer-intro h3 { font-size: 1.8rem; font-weight: 200; margin-bottom: 0.5rem; }
-                            .composer-intro p { color: var(--text-muted); font-size: 0.95rem; }
+                            .notifications-layout { display: grid; grid-template-columns: 1fr 400px; gap: 2rem; margin-top: 1rem; }
+                            
+                            .composer-container { padding: 2.5rem; }
+                            .composer-head { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 2.5rem; }
+                            .c-icon-bg { width: 50px; height: 50px; border-radius: 14px; background: var(--primary-glow); color: var(--primary); display: flex; align-items: center; justify-content: center; }
+                            .c-title h3 { font-size: 1.4rem; font-weight: 300; margin-bottom: 2px; }
+                            .c-title p { font-size: 0.85rem; color: var(--text-muted); }
 
-                            .form-grid-n { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
-                            .premium-select { 
-                                width: 100%; padding: 0.8rem 1rem; border-radius: 12px; 
-                                background: rgba(255,255,255,0.01); border: 1px solid var(--border-light);
-                                color: var(--text-main); font-family: 'Outfit'; outline: none;
+                            .broadcast-form-premium { display: flex; flex-direction: column; gap: 1.5rem; }
+                            .form-row-n { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+                            .input-group-n { display: flex; flex-direction: column; gap: 8px; position: relative; }
+                            .input-group-n label { font-size: 0.7rem; text-transform: uppercase; color: var(--text-muted); font-weight: 600; letter-spacing: 0.1em; margin-left: 0.4rem; margin-bottom: 2px; }
+                            
+                            .custom-dropdown-wrap { position: relative; width: 100%; }
+                            .custom-select-trigger { 
+                                background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-light); 
+                                border-radius: 14px; padding: 1rem 1.2rem; color: var(--text-main); font-family: 'Outfit';
+                                display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: 0.3s;
+                                min-height: 54px;
                             }
-                            .dispatch-btn { 
-                                width: 100%; padding: 1rem; border-radius: 14px; background: var(--primary);
-                                color: white; border: none; font-size: 1rem; cursor: pointer;
-                                display: flex; align-items: center; justify-content: center; gap: 10px;
-                                transition: 0.4s; box-shadow: 0 10px 20px var(--primary-glow);
+                            .custom-select-trigger:hover, .custom-select-trigger.active { border-color: var(--primary); background: rgba(255,255,255,0.05); }
+                            .custom-select-trigger svg { transition: 0.3s; opacity: 0.5; }
+                            .custom-select-trigger.active svg { transform: rotate(180deg); opacity: 1; color: var(--primary); }
+
+                            .custom-options-panel { 
+                                position: absolute; top: calc(100% + 8px); left: 0; right: 0; background: var(--bg-side); 
+                                border: 1px solid var(--border-light); border-radius: 16px; z-index: 100; overflow: hidden;
+                                box-shadow: 0 20px 50px rgba(0,0,0,0.4); backdrop-filter: blur(20px);
                             }
-                            .dispatch-btn:hover:not(:disabled) { transform: translateY(-4px); box-shadow: 0 15px 30px var(--primary-glow); }
-                            .dispatch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+                            .option-item { 
+                                padding: 0.8rem 1.2rem; cursor: pointer; transition: 0.2s; font-size: 0.9rem; color: var(--text-muted);
+                                display: flex; align-items: center; gap: 10px;
+                            }
+                            .option-item:hover { background: rgba(255,255,255,0.03); color: var(--text-main); padding-left: 1.5rem; }
+                            
+                            .p-indicator { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+                            .p-indicator.info { background: var(--primary); box-shadow: 0 0 10px var(--primary); }
+                            .p-indicator.success { background: #10b981; box-shadow: 0 0 10px #10b981; }
+                            .p-indicator.warning { background: #f59e0b; box-shadow: 0 0 10px #f59e0b; }
+                            .p-indicator.error { background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+
+                            .input-group-n textarea { 
+                                background: rgba(255, 255, 255, 0.01); border: 1px solid var(--border-light); 
+                                border-radius: 16px; padding: 1.2rem; color: var(--text-main); font-family: 'Outfit'; outline: none; transition: 0.3s;
+                                font-size: 1rem; line-height: 1.6;
+                            }
+                            .input-group-n textarea:focus { border-color: var(--primary); background: rgba(255,255,255,0.03); }
+                            .input-group-n textarea::placeholder { color: rgba(255,255,255,0.2); }
+
+                            .dispatch-action-area { margin-top: 1rem; display: flex; justify-content: center; width: 100%; }
+                            .premium-dispatch-btn { 
+                                width: 100%; padding: 1.2rem; border-radius: 18px; background: var(--primary); color: white; border: none; font-size: 1.1rem; font-weight: 500; cursor: pointer;
+                                display: flex; align-items: center; justify-content: center; gap: 12px; transition: 0.4s; box-shadow: 0 10px 25px var(--primary-glow);
+                                font-family: 'Outfit';
+                            }
+                            .premium-dispatch-btn:hover:not(:disabled) { transform: translateY(-4px); box-shadow: 0 20px 50px var(--primary-glow); filter: brightness(1.1); }
+                            .premium-dispatch-btn:active { transform: translateY(-1px); }
+                            .premium-dispatch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+                            /* Tracking Styles */
+                            .tracking-container { padding: 2rem; display: flex; flex-direction: column; max-height: 700px; }
+                            .tracking-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+                            .tracking-head h3 { font-size: 1rem; font-weight: 300; }
+                            .refresh-mini { background: none; border: 1px solid var(--border-light); color: var(--text-muted); width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.3s; }
+                            .refresh-mini:hover { color: var(--primary); border-color: var(--primary); }
+
+                            .sent-notif-list { overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; padding-right: 0.5rem; }
+                            .sent-notif-card { padding: 1.2rem; border-radius: 18px; border: 1px solid var(--border-light); background: rgba(255,255,255,0.01); transition: 0.3s; }
+                            .sent-notif-card:hover { background: rgba(255,255,255,0.02); }
+                            
+                            .sn-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem; }
+                            .sn-top-actions { display: flex; align-items: center; gap: 12px; }
+                            .sn-type { font-size: 0.55rem; font-weight: 600; text-transform: uppercase; padding: 2px 8px; border-radius: 6px; background: rgba(255,255,255,0.05); color: var(--text-muted); }
+                            .status-tag-mini { display: flex; align-items: center; gap: 4px; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }
+                            .status-tag-mini.sent { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+                            .status-tag-mini.received { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
+                            .status-tag-mini.seen { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+                            .read-status-badge { display: flex; align-items: center; gap: 5px; font-size: 0.65rem; color: var(--accent); font-weight: 500; }
+                            
+                            .del-btn-mini { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; border-radius: 4px; transition: 0.3s; }
+                            .del-btn-mini:hover { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+                            .sn-msg { font-size: 0.85rem; line-height: 1.5; color: var(--text-main); margin-bottom: 1rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+                            
+                            .sn-details { display: flex; justify-content: space-between; align-items: center; }
+                            .sn-time { font-size: 0.6rem; color: var(--text-muted); }
+                            
+                            .viewer-dots { display: flex; gap: -5px; }
+                            .v-dot { 
+                                width: 22px; height: 22px; border-radius: 50%; background: var(--primary); 
+                                color: white; display: flex; align-items: center; justify-content: center; 
+                                font-size: 0.6rem; font-weight: 600; border: 2px solid var(--bg-side);
+                                margin-left: -8px; transition: 0.3s;
+                            }
+                            .v-dot:first-child { margin-left: 0; }
+                            .v-dot:hover { transform: translateY(-3px); z-index: 10; }
+
+                            @media (max-width: 1200px) {
+                                .notifications-layout { grid-template-columns: 1fr; }
+                                .tracking-container { max-height: none; }
+                            }
                         `}</style>
                     </div>
                 )}
@@ -824,7 +1026,9 @@ const AdminDashboard = ({ onLogout }) => {
                     <div className="admin-modal policy-modal animate-pop">
                         <div className="modal-header">
                             <div className="modal-title-wrap">
-                                <div className="bank-avatar">{selectedPolicy.bank_name?.charAt(0)}</div>
+                                <div className="bank-avatar">
+                                    {BANK_LOGOS[selectedPolicy.bank_name] ? <img src={BANK_LOGOS[selectedPolicy.bank_name]} alt={selectedPolicy.bank_name} /> : selectedPolicy.bank_name?.charAt(0)}
+                                </div>
                                 <div>
                                     <h2>{selectedPolicy.bank_name}</h2>
                                     <p>Configure Partner Protocol</p>
@@ -1114,6 +1318,18 @@ const AdminDashboard = ({ onLogout }) => {
                 }
                 .employee-card.interactive:hover { transform: translateY(-4px); border-color: rgba(99, 102, 241, 0.3); }
                 
+                .emp-top { display: flex; align-items: center; gap: 15px; margin-bottom: 1.5rem; }
+                .emp-avatar { 
+                    width: 45px; height: 45px; background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); 
+                    color: white; border-radius: 14px; display: flex; align-items: center; justify-content: center; 
+                    font-weight: 600; font-size: 1.1rem; position: relative;
+                }
+                .emp-avatar .online-dot { 
+                    position: absolute; bottom: -2px; right: -2px; width: 12px; height: 12px; 
+                    background: #10b981; border: 2px solid var(--card-bg); border-radius: 50%; 
+                }
+                
+                .emp-info h3 { font-size: 1rem; font-weight: 500; margin-bottom: 2px; }
                 .emp-info span { font-size: 0.75rem; color: var(--text-muted); }
                 .edit-emp-btn { margin-left: auto; width: 32px; height: 32px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.1); background: transparent; color: #94a3b8; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 
@@ -1307,7 +1523,8 @@ const AdminDashboard = ({ onLogout }) => {
                 .policy-card:hover { transform: translateY(-4px); border-color: #6366f1; box-shadow: 0 10px 30px -10px rgba(99, 102, 241, 0.2); }
                 
                 .p-card-head { display: flex; align-items: flex-start; gap: 14px; }
-                .bank-avatar { width: 44px; height: 44px; background: rgba(99, 102, 241, 0.1); color: #6366f1; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.2rem; }
+                .bank-avatar { width: 44px; height: 44px; background: rgba(99, 102, 241, 0.1); color: #6366f1; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.2rem; overflow: hidden; }
+                .bank-avatar img { width: 100%; height: 100%; object-fit: contain; background: white; }
                 .bank-info h3 { font-size: 1.1rem; font-weight: 400; margin-bottom: 4px; }
                 .bank-info span { font-size: 0.75rem; color: var(--text-muted); display: block; }
                 .irr-badge { margin-left: auto; background: rgba(34, 197, 94, 0.1); color: #22c55e; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 600; }

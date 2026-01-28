@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabase';
 
+import { ALL_BANKS, BANK_LOGOS } from '../constants/banks';
+
 const Tracking = () => {
     const [clients, setClients] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [selectedClient, setSelectedClient] = useState(null);
+    const [statusFilter, setStatusFilter] = useState('all');
 
     useEffect(() => {
         fetchClients();
@@ -69,6 +72,76 @@ const Tracking = () => {
             }
         } catch (error) {
             alert('Update failed: ' + error.message);
+        }
+    };
+
+    const calculateEligibility = (currentAnswers) => {
+        const scores = {};
+        ALL_BANKS.forEach(bank => scores[bank] = 0);
+
+        const rules = [
+            { id: 'q3', yes: ALL_BANKS, no: ["INCRED/FINABLE"] },
+            { id: 'q4', yes: ["ICICI BANK", "IDFC BANK", "YES BANK", "HDFC BANK", "AXIS BANK", "AXIS FINANCE", "ADITYA BIRLA"], no: ["PRIMAL", "CHOLA", "SRIRAM", "TATA CAPITAL", "BAJAJ", "POONAWALA", "INCRED/FINABLE", "SMFG", "UTKARSH"] },
+            { id: 'q5', yes: ["ICICI BANK", "HDFC BANK", "BAJAJ", "POONAWALA", "SRIRAM", "YES BANK", "AXIS BANK"], no: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "INCRED/FINABLE", "SMFG", "AXIS FINANCE", "IDFC BANK", "YES BANK"] },
+            { id: 'q6', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"], no: ["INCRED/FINABLE", "SMFG", "SRIRAM", "POONAWALA", "AXIS FINANCE"] },
+            { id: 'q7', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "POONAWALA", "SMFG", "AXIS FINANCE"], no: ["INCRED/FINABLE", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"] }
+        ];
+
+        if (currentAnswers.q8 === 'Yes') {
+            return { banks: [], probable: [], reasons: [{ q: "Recent Cheque Bounce (Last 6 Months)", lost: ALL_BANKS }] };
+        }
+
+        const reasons = [];
+        ALL_BANKS.forEach(bank => {
+            rules.forEach(rule => {
+                const targetList = currentAnswers[rule.id] === 'Yes'
+                    ? [...new Set([...rule.yes, ...rule.no])]
+                    : rule.no;
+                if (targetList.includes(bank)) scores[bank] += 1;
+            });
+        });
+
+        const strictBanks = ALL_BANKS.filter(bank => scores[bank] === rules.length);
+        const probableBanks = ALL_BANKS.filter(bank => scores[bank] === rules.length - 1 && !strictBanks.includes(bank));
+        return { banks: strictBanks, probable: probableBanks, reasons };
+    };
+
+    const handleAnswerUpdate = async (client, qKey, newVal) => {
+        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.name || 'Vicky';
+        const currentQs = typeof client.questions === 'string' ? JSON.parse(client.questions) : client.questions;
+        const newQs = { ...currentQs, [qKey]: newVal };
+
+        const { banks, probable, reasons } = calculateEligibility(newQs);
+        const finalQs = { ...newQs, results: banks, probable, reasons };
+
+        // Auto-reject if Instrument Clearance issue (q8) is confirmed
+        const updatePayload = {
+            questions: finalQs,
+            loginned_by: currentUser
+        };
+
+        if (qKey === 'q8' && newVal === 'Yes') {
+            updatePayload.status = 'rejected';
+        }
+
+        try {
+            const { error } = await supabase
+                .from('client_logins')
+                .update(updatePayload)
+                .eq('id', client.id);
+
+            if (error) throw error;
+
+            const updatedClient = {
+                ...client,
+                questions: finalQs,
+                ...(updatePayload.status ? { status: updatePayload.status } : {})
+            };
+
+            setClients(prev => prev.map(c => c.id === client.id ? updatedClient : c));
+            setSelectedClient(updatedClient);
+        } catch (error) {
+            alert('Answer update failed: ' + error.message);
         }
     };
 
@@ -213,7 +286,11 @@ const Tracking = () => {
                                 <label>Eligibility Diagnostics</label>
                                 <div className="diagnostic-grid">
                                     {Object.entries(questionLabels).map(([key, label]) => (
-                                        <div key={key} className="diag-item">
+                                        <div
+                                            key={key}
+                                            className="diag-item interactive"
+                                            onClick={() => handleAnswerUpdate(client, key, qs[key] === 'Yes' ? 'No' : 'Yes')}
+                                        >
                                             <span className="d-label">{label}</span>
                                             <span className={`d-status ${qs[key] === 'Yes' ? 'pass' : 'fail'}`}>
                                                 {qs[key] === 'Yes' ? 'YES' : 'NO'}
@@ -229,9 +306,12 @@ const Tracking = () => {
                                     {qs.results && qs.results.length > 0 ? (
                                         <div className="partners-box">
                                             <span className="p-header">Primary Tier Partners</span>
-                                            <div className="p-grid">
+                                            <div className="p-grid logos">
                                                 {qs.results.map(b => (
-                                                    <div key={b} className="p-tag high">{b}</div>
+                                                    <div key={b} className="logo-pill high">
+                                                        <img src={BANK_LOGOS[b]} alt={b} onError={(e) => e.target.style.opacity = '0.3'} />
+                                                        <span className="bank-name-mini">{b}</span>
+                                                    </div>
                                                 ))}
                                             </div>
                                         </div>
@@ -239,15 +319,20 @@ const Tracking = () => {
                                         <div className="none-found">No Primary Tier matches identified for this risk profile.</div>
                                     )}
 
-                                    {qs.probable && qs.probable.length > 0 && (
+                                    {qs.probable && qs.probable.length > 0 ? (
                                         <div className="partners-box alt">
                                             <span className="p-header">Secondary Tier Candidates</span>
-                                            <div className="p-grid">
+                                            <div className="p-grid logos">
                                                 {qs.probable.map(b => (
-                                                    <div key={b} className="p-tag mid">{b}</div>
+                                                    <div key={b} className="logo-pill mid">
+                                                        <img src={BANK_LOGOS[b]} alt={b} onError={(e) => e.target.style.opacity = '0.3'} />
+                                                        <span className="bank-name-mini">{b}</span>
+                                                    </div>
                                                 ))}
                                             </div>
                                         </div>
+                                    ) : (
+                                        <div className="none-found">No Semi-Eligible (Secondary Tier) candidates identified for this risk profile.</div>
                                     )}
                                 </div>
                             </section>
@@ -258,11 +343,23 @@ const Tracking = () => {
         );
     };
 
-    const filteredClients = clients.filter(c =>
-        c.client_name.toLowerCase().includes(search.toLowerCase()) ||
-        c.company_name?.toLowerCase().includes(search.toLowerCase()) ||
-        c.pan?.toLowerCase().includes(search.toLowerCase())
-    );
+    const filteredClients = clients.filter(c => {
+        const matchesSearch = c.client_name.toLowerCase().includes(search.toLowerCase()) ||
+            c.company_name?.toLowerCase().includes(search.toLowerCase()) ||
+            c.pan?.toLowerCase().includes(search.toLowerCase()) ||
+            c.aadhar?.toLowerCase().includes(search.toLowerCase());
+
+        const matchesStatus = statusFilter === 'all' || c.status === statusFilter;
+
+        return matchesSearch && matchesStatus;
+    });
+
+    // Identify duplicates based on PAN or Aadhar
+    const duplicateCounts = clients.reduce((acc, c) => {
+        if (c.pan) acc[c.pan] = (acc[c.pan] || 0) + 1;
+        if (c.aadhar) acc[c.aadhar] = (acc[c.aadhar] || 0) + 1;
+        return acc;
+    }, {});
 
     return (
         <div className="tracking-view">
@@ -280,6 +377,19 @@ const Tracking = () => {
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                         />
+                    </div>
+                    <div className="status-filter">
+                        <select
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value)}
+                            className="filter-select"
+                        >
+                            <option value="all">All Statuses</option>
+                            <option value="follow_up">Follow Up</option>
+                            <option value="rejected">Rejected</option>
+                            <option value="approved">Approved</option>
+                            <option value="disbursed">Disbursed</option>
+                        </select>
                     </div>
                     <button className="ghost-btn" onClick={fetchClients}>Synchronize</button>
                 </div>
@@ -315,7 +425,12 @@ const Tracking = () => {
                                             <div className="entity-info">
                                                 <div className="name-row">
                                                     <span className="name">{client.client_name}</span>
-                                                    <span className="loan-type-tag">{client.loan_type?.replace('_', ' ')}</span>
+                                                    <div className="tags-row">
+                                                        <span className="loan-type-tag">{client.loan_type?.replace('_', ' ')}</span>
+                                                        {(duplicateCounts[client.pan] > 1 || (client.aadhar && duplicateCounts[client.aadhar] > 1)) && (
+                                                            <span className="duplicate-tag" title="Multiple entries found for this ID">DUPLICATE</span>
+                                                        )}
+                                                    </div>
                                                 </div>
                                                 <span className="id">{client.company_name}</span>
                                             </div>
@@ -371,6 +486,36 @@ const Tracking = () => {
                 .ghost-btn { background: rgba(255,255,255,0.01); border: 1px solid var(--border-light); color: var(--text-muted); padding: 0.6rem 1.5rem; border-radius: 12px; cursor: pointer; transition: 0.3s; font-size: 0.9rem; }
                 .ghost-btn:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-main); }
 
+                .filter-select {
+                    background: rgba(255, 255, 255, 0.01); border: 1px solid var(--border-light);
+                    color: var(--text-muted); padding: 0.6rem 1.2rem; border-radius: 12px;
+                    font-size: 0.9rem; outline: none; cursor: pointer; transition: 0.3s;
+                    font-family: 'Outfit';
+                }
+                .filter-select:focus { border-color: var(--primary); color: var(--text-main); }
+                .filter-select option { background: #0a0a0b; color: var(--text-main); }
+
+                .tags-row { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+
+                .loan-type-tag {
+                    font-size: 0.6rem; text-transform: uppercase; color: var(--primary);
+                    background: var(--primary-glow); padding: 2px 8px; border-radius: 6px;
+                    letter-spacing: 0.05em; font-weight: 500;
+                }
+
+                .duplicate-tag {
+                    font-size: 0.55rem; color: #ef4444; background: rgba(239, 68, 68, 0.1);
+                    padding: 2px 6px; border-radius: 4px; font-weight: 600;
+                    letter-spacing: 0.05em; border: 1px solid rgba(239, 68, 68, 0.2);
+                    animation: pulse-red 2s infinite;
+                }
+
+                @keyframes pulse-red {
+                    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2); }
+                    70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+                    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+                }
+
                 .glass-container { background: var(--glass-bg); backdrop-filter: blur(15px); border: 1px solid var(--glass-border); border-radius: 20px; box-shadow: var(--card-shadow); overflow: hidden; }
 
                 .premium-table { width: 100%; border-collapse: collapse; text-align: left; }
@@ -389,9 +534,7 @@ const Tracking = () => {
                     display: flex; align-items: center; justify-content: center;
                     font-size: 0.8rem;
                 }
-                .entity-info .name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
                 .entity-info .name { font-size: 0.9rem; font-weight: 400; }
-                .loan-type-tag { font-size: 0.6rem; text-transform: uppercase; background: rgba(99, 102, 241, 0.1); color: var(--primary); padding: 1px 6px; border-radius: 4px; letter-spacing: 0.05em; font-weight: 500; }
                 .entity-info .id { font-size: 0.65rem; color: var(--text-muted); }
 
                 .status-tag { display: inline-flex; align-items: center; gap: 6px; padding: 0.3rem 0.7rem; border-radius: 100px; font-size: 0.7rem; text-transform: uppercase; }
@@ -484,6 +627,22 @@ const Tracking = () => {
                 .p-tag.high { background: rgba(16, 185, 129, 0.05); color: var(--accent); }
                 .p-tag.mid { background: rgba(99, 102, 241, 0.05); color: var(--primary); }
 
+                .diag-item.interactive { cursor: pointer; transition: 0.3s; }
+                .diag-item.interactive:hover { border-color: var(--primary); background: rgba(255, 255, 255, 0.03); }
+
+                .p-grid.logos { gap: 1rem; }
+                .logo-pill { 
+                    display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px;
+                    background: rgba(255,255,255,0.01); border: 1px solid var(--border-light); border-radius: 12px;
+                    transition: 0.3s; width: 80px;
+                }
+                .logo-pill img { width: 40px; height: 40px; object-fit: contain; }
+                .logo-pill.high { border-color: rgba(16, 185, 129, 0.2); }
+                .logo-pill.mid { border-color: rgba(99, 102, 241, 0.2); }
+                .logo-pill.rejected { opacity: 0.3; filter: grayscale(1); border-color: transparent; }
+                .partners-box.waitlist { margin-top: 1.5rem; border-top: 1px dashed var(--border-light); padding-top: 1rem; }
+                .bank-name-mini { font-size: 0.55rem; color: var(--text-muted); text-align: center; }
+
                 @media (max-width: 1024px) {
                     .metric-row { grid-template-columns: 1fr 1fr; }
                     .premium-modal { width: 90%; }
@@ -493,6 +652,8 @@ const Tracking = () => {
                     .view-header { flex-direction: column; align-items: flex-start; gap: 1.5rem; }
                     .header-actions { width: 100%; flex-direction: column; }
                     .premium-search { width: 100%; }
+                    .status-filter { width: 100%; }
+                    .filter-select { width: 100%; }
                     .ghost-btn { width: 100%; }
                     
                     .glass-container { background: transparent; border: none; box-shadow: none; overflow: visible; }

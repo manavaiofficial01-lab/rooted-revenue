@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabase';
+import { BANK_LOGOS } from '../constants/banks';
 
 const PolicySheet = () => {
     const [policies, setPolicies] = useState([]);
@@ -83,7 +84,14 @@ const PolicySheet = () => {
                                 {filteredPolicies.map(policy => (
                                     <tr key={policy.id}>
                                         <td className="bank-cell" data-label="Partner">
-                                            <div className="bank-name">{policy.bank_name}</div>
+                                            <div className="bank-logo-wrap">
+                                                {BANK_LOGOS[policy.bank_name] ? (
+                                                    <img src={BANK_LOGOS[policy.bank_name]} alt={policy.bank_name} className="bank-logo-img" />
+                                                ) : (
+                                                    <div className="bank-initial">{policy.bank_name?.charAt(0)}</div>
+                                                )}
+                                                <div className="bank-name">{policy.bank_name}</div>
+                                            </div>
                                         </td>
                                         <td className="data-cell" data-label="Income Requirement">₹{policy.income}</td>
                                         <td className="data-cell" data-label="BT Period">{policy.bt || 'NA'}</td>
@@ -158,6 +166,9 @@ const PolicySheet = () => {
                 }
                 
                 .bank-cell { font-weight: 500; color: var(--primary); }
+                .bank-logo-wrap { display: flex; align-items: center; gap: 12px; }
+                .bank-logo-img { width: 32px; height: 32px; object-fit: contain; background: white; border-radius: 8px; border: 1px solid var(--border-light); }
+                .bank-initial { width: 32px; height: 32px; background: rgba(99, 102, 241, 0.1); color: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 600; }
                 .bank-name { font-size: 0.9rem; font-weight: 400; color: var(--text-main); }
                 .memo-cell { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
                 

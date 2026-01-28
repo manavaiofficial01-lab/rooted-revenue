@@ -1,11 +1,18 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabase';
 
-const ALL_BANKS = [
-    "PRIMAL", "CHOLA", "SRIRAM", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ",
-    "POONAWALA", "INCRED/FINABLE", "SMFG", "AXIS FINANCE", "IDFC BANK",
-    "UTKARSH", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"
-];
+import { ALL_BANKS, BANK_LOGOS } from '../constants/banks';
+
+const DIAGNOSTIC_LABELS = {
+    q1: "Gold Loan Status",
+    q2: "Credit Connectivity",
+    q3: "Pay-slip Verification",
+    q4: "Bureau Standing (>700)",
+    q5: "Income Threshold (>25k)",
+    q6: "Statutory Deductions",
+    q7: "Address Verification",
+    q8: "Instrument Clearance (6m)"
+};
 
 const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
     const [stage, setStage] = useState(2);
@@ -25,6 +32,8 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
     const [clientId, setClientId] = useState(null);
     const [eligibleBanks, setEligibleBanks] = useState([]);
     const [probableBanks, setProbableBanks] = useState([]);
+    const [liveEligibleBanks, setLiveEligibleBanks] = useState({ primary: ALL_BANKS, alternate: [] });
+    const [isShuffling, setIsShuffling] = useState(false);
 
     const [calcData, setCalcData] = useState({
         salary: '',
@@ -172,9 +181,47 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
         };
     };
 
+    const getLiveBanks = (currentAnswers) => {
+        const rules = [
+            { id: 'q3', yes: ALL_BANKS, no: ["INCRED/FINABLE"] },
+            { id: 'q4', yes: ["ICICI BANK", "IDFC BANK", "YES BANK", "HDFC BANK", "AXIS BANK", "AXIS FINANCE", "ADITYA BIRLA"], no: ["PRIMAL", "CHOLA", "SRIRAM", "TATA CAPITAL", "BAJAJ", "POONAWALA", "INCRED/FINABLE", "SMFG", "UTKARSH"] },
+            { id: 'q5', yes: ["ICICI BANK", "HDFC BANK", "BAJAJ", "POONAWALA", "SRIRAM", "YES BANK", "AXIS BANK"], no: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "INCRED/FINABLE", "SMFG", "AXIS FINANCE", "IDFC BANK", "YES BANK"] },
+            { id: 'q6', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"], no: ["INCRED/FINABLE", "SMFG", "SRIRAM", "POONAWALA", "AXIS FINANCE"] },
+            { id: 'q7', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "POONAWALA", "SMFG", "AXIS FINANCE"], no: ["INCRED/FINABLE", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"] }
+        ];
+
+        if (currentAnswers.q8 === 'Yes') return { primary: [], alternate: [] };
+
+        const scores = {};
+        ALL_BANKS.forEach(bank => scores[bank] = 0);
+        let answeredCount = 0;
+
+        rules.forEach(rule => {
+            const ans = currentAnswers[rule.id];
+            if (ans !== null) {
+                answeredCount++;
+                const targetList = ans === 'Yes' ? [...new Set([...rule.yes, ...rule.no])] : rule.no;
+                ALL_BANKS.forEach(bank => {
+                    if (targetList.includes(bank)) scores[bank]++;
+                });
+            }
+        });
+
+        return {
+            primary: ALL_BANKS.filter(bank => scores[bank] === answeredCount),
+            alternate: ALL_BANKS.filter(bank => scores[bank] === answeredCount - 1 && answeredCount > 0)
+        };
+    };
+
     const handleAnswer = (q, val) => {
         const newAnswers = { ...answers, [q]: val };
         setAnswers(newAnswers);
+
+        // Update live filtering
+        setIsShuffling(true);
+        const live = getLiveBanks(newAnswers);
+        setLiveEligibleBanks(live);
+        setTimeout(() => setIsShuffling(false), 600);
 
         if (q === 'q8') {
             const { banks: eligible, probable, reasons } = calculateEligibility(newAnswers);
@@ -182,6 +229,23 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
             setProbableBanks(probable);
             saveAnswers(newAnswers, eligible, probable, reasons);
         }
+    };
+
+    const handlePrevious = () => {
+        if (currentQIndex === 0) {
+            setStage(2);
+            return;
+        }
+        const keys = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8'];
+        const prevKey = keys[currentQIndex - 1];
+        const newAnswers = { ...answers, [prevKey]: null };
+        setAnswers(newAnswers);
+
+        // Update live filtering
+        setIsShuffling(true);
+        const live = getLiveBanks(newAnswers);
+        setLiveEligibleBanks(live);
+        setTimeout(() => setIsShuffling(false), 600);
     };
 
     const saveAnswers = async (finalAnswers, eligible, probable, reasons) => {
@@ -358,7 +422,17 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                                 <div className="mini-progress">
                                     <div className="progress-fill" style={{ width: `${(currentQIndex / 8) * 100}%` }}></div>
                                 </div>
-                                <span className="quest-meta">Step {currentQIndex + 1} of 8</span>
+                                <div className="quest-meta-row">
+                                    <button className="back-quest-btn" onClick={handlePrevious}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
+                                        <span>Previous</span>
+                                    </button>
+                                    <span className="quest-meta">Question {currentQIndex + 1} / 8</span>
+                                    <div className="logo-indicator">
+                                        <div className="pulsing-dot"></div>
+                                        <span>Evaluating Partners</span>
+                                    </div>
+                                </div>
                             </div>
 
                             <div className="quest-body">
@@ -435,6 +509,38 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                                     </div>
                                 )}
                             </div>
+
+                            <div className="live-matching-container">
+                                <div className="live-header">
+                                    <div className="live-title">
+                                        <div className="live-pulse"></div>
+                                        <span>Live Matching Partners</span>
+                                    </div>
+                                    <span className="live-count">{liveEligibleBanks.primary.length + liveEligibleBanks.alternate.length} Eligible Partners</span>
+                                </div>
+                                <div className={`live-partners-grid ${isShuffling ? 'shuffling' : ''}`}>
+                                    {ALL_BANKS.map((bank) => {
+                                        const isPrimary = liveEligibleBanks.primary.includes(bank);
+                                        const isAlternate = liveEligibleBanks.alternate.includes(bank);
+                                        const isRejected = !isPrimary && !isAlternate;
+
+                                        return (
+                                            <div
+                                                key={bank}
+                                                className={`live-logo-item ${isPrimary ? 'is-primary' : isAlternate ? 'is-alternate' : 'is-rejected'}`}
+                                            >
+                                                <div className="logo-box">
+                                                    <img src={BANK_LOGOS[bank]} alt={bank} onError={(e) => e.target.style.opacity = '0.3'} />
+                                                    {isPrimary && <div className="match-badge">Match</div>}
+                                                    {isAlternate && <div className="match-badge alt">Potential</div>}
+                                                    {isRejected && <div className="match-badge rejected">Waitlist</div>}
+                                                </div>
+                                                <span className="bank-name-mini">{bank}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
                         </>
                     ) : (
                         <div className="results-box animate-pop">
@@ -455,38 +561,69 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                                 <p>Partners evaluated for {formData.client_name}</p>
                             </div>
 
-                            <div className="partners-list">
-                                {eligibleBanks.length > 0 && (
-                                    <div className="partner-group">
-                                        <label>Primary Recommendations</label>
-                                        <div className="p-grid">
-                                            {eligibleBanks.map(bank => (
-                                                <div key={bank} className="p-pill high-match">{bank}</div>
-                                            ))}
-                                        </div>
+                            <div className="results-partners-container">
+                                <div className="results-section">
+                                    <h3 className="section-title">Eligibility Diagnostics</h3>
+                                    <div className="diagnostics-grid">
+                                        {Object.keys(DIAGNOSTIC_LABELS).map(key => (
+                                            <div key={key} className="diagnostic-item">
+                                                <span>{DIAGNOSTIC_LABELS[key]}</span>
+                                                <span className={`status-tag ${answers[key] === 'Yes' || (key === 'q8' && answers[key] === 'No') ? 'pos' : 'neg'}`}>
+                                                    {answers[key] === 'Yes' ? 'YES' : 'NO'}
+                                                </span>
+                                            </div>
+                                        ))}
                                     </div>
-                                )}
+                                </div>
 
-                                {probableBanks.length > 0 && (
-                                    <div className="partner-group alt">
-                                        <label>Alternative Options</label>
-                                        <div className="p-grid">
-                                            {probableBanks.map(bank => (
-                                                <div key={bank} className="p-pill mid-match">{bank}</div>
+                                <div className="results-section">
+                                    <h3 className="section-title">Portfolio Recommendations</h3>
+
+                                    <div className="tier-group">
+                                        <label className="tier-label">Primary Tier Partners</label>
+                                        <div className="live-partners-grid results-grid">
+                                            {ALL_BANKS.filter(b => eligibleBanks.includes(b)).map((bank) => (
+                                                <div key={bank} className="live-logo-item result-item is-primary">
+                                                    <div className="logo-box">
+                                                        <img src={BANK_LOGOS[bank]} alt={bank} />
+                                                        <div className="match-badge">Match</div>
+                                                    </div>
+                                                    <span className="bank-name-mini">{bank}</span>
+                                                </div>
                                             ))}
                                         </div>
                                     </div>
-                                )}
+
+                                    <div className="tier-group">
+                                        <div className="tier-header-wrap">
+                                            <label className="tier-label">Secondary Tier Candidates</label>
+                                            {probableBanks.length === 0 && <span className="tier-none-notice">— No Candidates Found —</span>}
+                                        </div>
+                                        {probableBanks.length > 0 ? (
+                                            <div className="live-partners-grid results-grid">
+                                                {ALL_BANKS.filter(b => probableBanks.includes(b)).map((bank) => (
+                                                    <div key={bank} className="live-logo-item result-item is-alternate">
+                                                        <div className="logo-box">
+                                                            <img src={BANK_LOGOS[bank]} alt={bank} />
+                                                            <div className="match-badge alt">Potential</div>
+                                                        </div>
+                                                        <span className="bank-name-mini">{bank}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="tier-info-text">Based on the current profile, no secondary tier partners identified for this risk appetite.</p>
+                                        )}
+                                    </div>
+
+                                </div>
 
                                 {eligibleBanks.length === 0 && probableBanks.length === 0 && (
-                                    <div className="rejection-card">
-                                        <p>Constraint Rejection</p>
-                                        <div className="r-reasons">
-                                            {calculateEligibility(answers).reasons.map((r, i) => (
-                                                <div key={i} className="r-item">
-                                                    <span>{r.q}</span>
-                                                    <span className="r-count">-{r.lost.length} Banks</span>
-                                                </div>
+                                    <div className="rejection-summary">
+                                        <p>Immediate Profile Rejection</p>
+                                        <div className="r-grid-mini">
+                                            {calculateEligibility(answers).reasons.slice(0, 3).map((r, i) => (
+                                                <div key={i} className="r-tag-mini">{r.q}</div>
                                             ))}
                                         </div>
                                     </div>
@@ -495,15 +632,22 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
 
                             <div className="confirm-zone">
                                 {(eligibleBanks.length > 0 || probableBanks.length > 0) ? (
-                                    <button className="confirm-btn" onClick={() => setStage(4)}>Continue calculations →</button>
+                                    <div className="confirm-actions">
+                                        <button className="confirm-btn primary" onClick={() => setStage(4)}>Continue calculations →</button>
+                                        <button className="text-btn" onClick={() => handleAnswer('q8', null)}>← Change Answers</button>
+                                    </div>
                                 ) : (
-                                    <button className="confirm-btn" onClick={onComplete}>Back to Dashboard</button>
+                                    <div className="confirm-actions">
+                                        <button className="confirm-btn" onClick={onComplete}>Back to Dashboard</button>
+                                        <button className="text-btn" onClick={() => handleAnswer('q8', null)}>← Change Answers</button>
+                                    </div>
                                 )}
                             </div>
                         </div>
                     )}
                 </div>
             )}
+
             {stage === 4 && (
                 <div className="glass-card calc-stage">
                     <div className="stage-head">
@@ -707,9 +851,17 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                 .q-btns { display: flex; gap: 1.5rem; }
                 .q-btns button { 
                     flex: 1; padding: 1.5rem; border-radius: 24px; border: 1px solid var(--border-medium);
-                    background: rgba(255, 255, 255, 0.01); color: var(--text-main); font-size: 1.1rem; cursor: pointer; transition: 0.3s;
+                    background: rgba(255, 255, 255, 0.02); color: var(--text-main); font-size: 1.1rem; cursor: pointer; transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+                    position: relative; overflow: hidden;
                 }
-                .q-btns button:hover { background: var(--primary); color: white; transform: translateY(-4px); }
+                .q-btns button::after {
+                    content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+                    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+                    transition: 0.5s;
+                }
+                .q-btns button:hover::after { left: 100%; }
+                .q-btns button:hover { background: var(--primary); color: white; transform: translateY(-4px) scale(1.02); border-color: transparent; box-shadow: 0 15px 30px var(--primary-glow); }
+                .q-btns button:active { transform: translateY(0) scale(0.98); }
 
                 .results-box { text-align: center; }
                 .status-icon { width: 70px; height: 70px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2rem; margin: 0 auto 2rem; color: white; }
@@ -720,10 +872,96 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
 
                 .partner-group { margin-bottom: 2.5rem; text-align: left; }
                 .partner-group label { display: block; margin-bottom: 1.2rem; color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.15em; }
-                .p-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1rem; }
-                .p-pill { padding: 1rem 1.5rem; border-radius: 16px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-light); font-size: 0.95rem; text-align: center; }
+                .p-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 1rem; }
+                .p-pill { padding: 1rem; border-radius: 16px; background: rgba(255,255,255,0.01); border: 1px solid var(--border-light); font-size: 0.95rem; text-align: center; display: flex; align-items: center; justify-content: center; min-height: 80px; }
+                .logo-pill { background: rgba(255,255,255,0.02); }
+                .bank-logo-small { max-width: 100%; max-height: 40px; object-fit: contain; filter: brightness(1.2); }
 
-                .rejection-card { background: rgba(239, 68, 68, 0.02); border: 1px solid rgba(239, 68, 68, 0.08); padding: 2rem; border-radius: 24px; }
+                .quest-meta-row { display: flex; justify-content: space-between; align-items: center; }
+                .logo-indicator { display: flex; align-items: center; gap: 8px; font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; }
+                .pulsing-dot { width: 6px; height: 6px; background: #10b981; border-radius: 50%; animation: pulse 2s infinite; }
+                @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
+
+                .back-quest-btn {
+                    display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.05);
+                    border: 1px solid var(--border-light); color: var(--text-muted); padding: 0.4rem 0.8rem;
+                    border-radius: 8px; cursor: pointer; font-size: 0.7rem; transition: 0.3s; text-transform: uppercase; letter-spacing: 0.05em;
+                }
+                .back-quest-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-main); transform: translateX(-4px); }
+
+                .confirm-actions { display: flex; flex-direction: column; align-items: center; gap: 1.5rem; width: 100%; }
+                .confirm-btn.primary { background: var(--primary); }
+
+                .live-matching-container { margin-top: 4rem; padding-top: 2rem; border-top: 1px solid var(--border-light); }
+                .live-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+                .live-title { display: flex; align-items: center; gap: 10px; font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.15em; }
+                .live-pulse { width: 8px; height: 8px; background: #10b981; border-radius: 50%; box-shadow: 0 0 10px #10b981; animation: pulse 2s infinite; }
+                .live-count { font-size: 0.8rem; color: var(--primary); font-weight: 500; }
+
+                .live-partners-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 1.5rem; transition: 0.3s; }
+                .live-partners-grid.shuffling { opacity: 0.7; transform: translateY(5px); }
+
+                .live-logo-item { 
+                    display: flex; flex-direction: column; align-items: center; gap: 8px;
+                    transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+                }
+                .live-logo-item.is-primary { opacity: 1; transform: scale(1) translateY(0); }
+                .live-logo-item.is-alternate { opacity: 0.7; transform: scale(0.95); }
+                .live-logo-item.is-alternate .logo-box { border-style: dashed; }
+                .live-logo-item.is-rejected { opacity: 0.25; transform: scale(0.85); filter: grayscale(1); }
+                .live-logo-item.is-rejected .logo-box { border-color: transparent; background: transparent; }
+
+                .logo-box { 
+                    width: 64px; height: 64px; border-radius: 18px; background: rgba(255, 255, 255, 0.03); 
+                    border: 1px solid var(--border-light); display: flex; align-items: center; justify-content: center;
+                    padding: 10px; transition: 0.3s; position: relative;
+                }
+                .live-logo-item.is-primary:hover .logo-box { background: rgba(255, 255, 255, 0.06); border-color: var(--primary); transform: translateY(-4px); }
+                .logo-box img { max-width: 100%; max-height: 100%; object-fit: contain; filter: brightness(1.1); transition: 0.3s; }
+                
+                .match-badge {
+                    position: absolute; bottom: -5px; right: -5px; font-size: 0.5rem; padding: 2px 6px;
+                    border-radius: 4px; background: #10b981; color: white; text-transform: uppercase;
+                    letter-spacing: 0.05em; box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3);
+                }
+                .match-badge.alt { background: var(--primary); box-shadow: 0 4px 10px var(--primary-glow); }
+                .match-badge.rejected { background: var(--bg-subtle); color: var(--text-muted); box-shadow: none; border: 1px solid var(--border-light); }
+                .bank-name-mini { font-size: 0.6rem; color: var(--text-muted); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+                @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
+
+                .results-partners-container { margin-top: 2rem; text-align: left; display: flex; flex-direction: column; gap: 3rem; }
+                .results-section { border-top: 1px solid var(--border-light); padding-top: 2rem; }
+                .section-title { font-size: 0.75rem; text-transform: uppercase; color: var(--primary); letter-spacing: 0.2em; margin-bottom: 2rem; display: flex; align-items: center; gap: 10px; }
+                .section-title::before { content: ''; width: 2px; height: 14px; background: var(--primary); display: inline-block; }
+
+                .diagnostics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+                .diagnostic-item { 
+                    background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-light); padding: 1.2rem 1.5rem; 
+                    border-radius: 16px; display: flex; justify-content: space-between; align-items: center;
+                }
+                .diagnostic-item span:first-child { font-size: 0.9rem; color: var(--text-muted); font-weight: 300; }
+                .status-tag { font-size: 0.8rem; font-weight: 500; letter-spacing: 0.05em; }
+                .status-tag.pos { color: #10b981; }
+                .status-tag.neg { color: #ef4444; }
+
+                .tier-group { margin-bottom: 2.5rem; }
+                .tier-header-wrap { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem; }
+                .tier-label { font-size: 0.95rem; font-weight: 300; color: var(--text-main); }
+                .tier-none-notice { font-size: 0.65rem; color: #ef4444; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.8; }
+                .tier-helper-tag { font-size: 0.65rem; color: var(--primary); background: var(--primary-glow); padding: 4px 10px; border-radius: 8px; cursor: help; font-weight: 500; }
+                .tier-info-text { font-size: 0.8rem; color: var(--text-muted); font-weight: 300; margin-bottom: 1.5rem; line-height: 1.4; max-width: 500px; }
+                
+                .results-grid { margin-bottom: 0; gap: 1.5rem; }
+                .scrollable-x { display: flex; overflow-x: auto; padding-bottom: 10px; gap: 2rem; scrollbar-width: none; }
+                .scrollable-x::-webkit-scrollbar { display: none; }
+                .scrollable-x .result-item { flex-shrink: 0; }
+
+                .result-item .logo-box { width: 90px; height: 90px; border-radius: 24px; }
+                .rejection-summary { background: rgba(239, 68, 68, 0.03); border: 1px solid rgba(239, 68, 68, 0.12); padding: 2rem; border-radius: 24px; text-align: center; }
+                .rejection-summary p { font-size: 0.7rem; text-transform: uppercase; color: #ef4444; margin-bottom: 1rem; letter-spacing: 0.1em; }
+                .r-grid-mini { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+                .r-tag-mini { font-size: 0.65rem; padding: 4px 10px; border-radius: 6px; background: rgba(239, 68, 68, 0.1); color: #ef4444; }
 
                 .console-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; margin-bottom: 3rem; }
                 .console-inputs { display: flex; flex-direction: column; gap: 1.5rem; }
@@ -781,7 +1019,7 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
 
                 @keyframes slideDown { from { opacity: 0; transform: translateY(-30px); } to { opacity: 1; transform: translateY(0); } }
             `}</style>
-        </div>
+        </div >
     );
 };
 

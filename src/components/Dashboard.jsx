@@ -5,6 +5,9 @@ import { supabase } from '../../supabase';
 const Dashboard = ({ onLogout, user, children }) => {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
   const [notifications, setNotifications] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const displayName = user?.username || user?.email?.split('@')[0] || 'User';
   const initials = displayName.substring(0, 2).toUpperCase();
@@ -15,26 +18,111 @@ const Dashboard = ({ onLogout, user, children }) => {
   }, [theme]);
 
   useEffect(() => {
+    fetchNotificationHistory();
+  }, [user?.username]);
+
+  useEffect(() => {
+    if (showHistory) {
+      markAllAsRead();
+    }
+  }, [showHistory]);
+
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  const sendBrowserNotification = (message, type) => {
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification("Rooted Revenue Announcement", {
+        body: message,
+        icon: "/favicon.ico"
+      });
+    }
+  };
+
+  const fetchNotificationHistory = async () => {
+    if (!user?.username) return;
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*, notification_reads(*)')
+        .or(`target_username.eq.${user.username},is_global.eq.true`)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+
+      const processedData = data?.map(notif => {
+        const isRead = notif.notification_reads?.some(r => r.username === user.username);
+        return { ...notif, is_unread: !isRead };
+      }) || [];
+
+      setHistory(processedData);
+      setUnreadCount(processedData.filter(h => h.is_unread).length);
+
+      // Track 'received' status for 1-to-1 notifications
+      const receivedIds = data?.filter(n => !n.is_global && n.target_username === user.username && n.status === 'sent').map(n => n.id);
+      if (receivedIds?.length > 0) {
+        await supabase.from('notifications').update({ status: 'received', received_at: new Date().toISOString() }).in('id', receivedIds);
+      }
+    } catch (err) {
+      console.error('History fetch failed:', err);
+    }
+  };
+
+  useEffect(() => {
     if (!user?.username) return;
 
-    const channel = supabase
-      .channel('realtime_notifications')
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'notifications'
-      }, payload => {
-        const { message, target_username, is_global, type } = payload.new;
-        if (is_global || target_username === user.username) {
-          showToaster(message, type);
-        }
-      })
-      .subscribe();
+    // Direct fetch on mount
+    fetchNotificationHistory();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    // Set up polling every 5 minutes
+    const pollInterval = setInterval(() => {
+      fetchNotificationHistory();
+    }, 5 * 60 * 1000); // 300,000ms
+
+    return () => clearInterval(pollInterval);
   }, [user?.username]);
+
+  const markAllAsRead = async () => {
+    if (!user?.username || history.length === 0) return;
+
+    const unreadIds = history.filter(h => h.is_unread).map(h => h.id);
+    if (unreadIds.length === 0) return;
+
+    try {
+      const inserts = unreadIds.map(notifId => ({
+        notification_id: notifId,
+        username: user.username
+      }));
+
+      const { error } = await supabase
+        .from('notification_reads')
+        .insert(inserts);
+
+      if (error && error.code !== '23505') throw error; // Ignore unique constraint errors
+
+      // Update 'seen' status for 1-to-1 notifications
+      const personalUnreadIds = history.filter(h => h.is_unread && !h.is_global && h.target_username === user.username).map(h => h.id);
+      if (personalUnreadIds.length > 0) {
+        await supabase.from('notifications').update({ status: 'seen', seen_at: new Date().toISOString() }).in('id', personalUnreadIds);
+      }
+
+      setHistory(prev => prev.map(h => ({ ...h, is_unread: false })));
+      setUnreadCount(0);
+    } catch (err) {
+      console.error('Mark read failed:', err);
+    }
+  };
+
+  const handleClearHistory = () => {
+    if (confirm('Clear all announcements from your view? (This will not delete them for others)')) {
+      setHistory([]);
+      setUnreadCount(0);
+    }
+  };
 
   const showToaster = (message, type) => {
     const id = Date.now();
@@ -121,10 +209,52 @@ const Dashboard = ({ onLogout, user, children }) => {
             <h1>{activeLabel}</h1>
           </div>
           <div className="head-right">
-            <div className="notification-bell">
+            <div className="notification-bell" onClick={() => { setShowHistory(!showHistory); setUnreadCount(0); }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-              <div className="bell-dot"></div>
+              {unreadCount > 0 && <div className="bell-dot">{unreadCount}</div>}
             </div>
+
+            {showHistory && (
+              <div className="notification-modal-overlay" onClick={() => setShowHistory(false)}>
+                <div className="notification-modal animate-pop" onClick={e => { e.stopPropagation(); markAllAsRead(); }}>
+                  <div className="modal-header">
+                    <div className="h-left">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="1.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                      <h3>Office Announcements</h3>
+                    </div>
+                    <div className="h-right-actions">
+                      {history.length > 0 && (
+                        <button className="clear-all-btn" onClick={handleClearHistory}>Clear All</button>
+                      )}
+                      <button className="close-x" onClick={() => setShowHistory(false)}>×</button>
+                    </div>
+                  </div>
+                  <div className="modal-content-area">
+                    {history.length === 0 ? (
+                      <div className="empty-notif">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.2, marginBottom: '1rem' }}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path></svg>
+                        <p>No recent announcements found.</p>
+                      </div>
+                    ) : (
+                      <div className="history-stack">
+                        {history.map(h => (
+                          <div key={h.id} className={`history-card ${h.type} ${h.is_unread ? 'is-unread' : ''}`}>
+                            <div className="h-meta">
+                              <span className="h-type">{h.is_global ? 'OFFICE BROADCAST' : 'PERSONAL ASSIGNMENT'}</span>
+                              <div className="h-right-meta">
+                                {h.is_unread && <span className="unread-dot"></span>}
+                                <span className="h-time">{new Date(h.created_at).toLocaleDateString()}</span>
+                              </div>
+                            </div>
+                            <p className="h-msg">{h.message}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </header>
 
@@ -210,7 +340,73 @@ const Dashboard = ({ onLogout, user, children }) => {
 
         .notification-bell { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border-light); display: flex; align-items: center; justify-content: center; color: var(--text-muted); cursor: pointer; transition: 0.3s; position: relative; }
         .notification-bell:hover { background: rgba(255, 255, 255, 0.02); color: var(--text-main); border-color: var(--primary); }
-        .bell-dot { position: absolute; top: 11px; right: 11px; width: 4px; height: 4px; background: #ef4444; border-radius: 50%; box-shadow: 0 0 10px #ef4444; }
+        .bell-dot { 
+            position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; 
+            background: #ef4444; border-radius: 50%; color: white; font-size: 0.65rem;
+            display: flex; align-items: center; justify-content: center; font-weight: 600;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.4); border: 2px solid var(--bg-main);
+        }
+
+        .notification-modal-overlay {
+            position: fixed; inset: 0; 
+            background: rgba(0, 0, 0, 0.4); 
+            backdrop-filter: blur(12px); 
+            display: flex; align-items: center; justify-content: center; 
+            z-index: 2000; animation: fadeIn 0.3s ease;
+        }
+
+        .notification-modal {
+            width: 100%; max-width: 500px; max-height: 80vh;
+            background: var(--bg-side); border: 1px solid var(--border-light); 
+            border-radius: 28px; box-shadow: 0 40px 100px rgba(0,0,0,0.5);
+            display: flex; flex-direction: column; overflow: hidden;
+            animation: modalScaleUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes modalScaleUp { 
+            from { opacity: 0; transform: scale(0.9) translateY(20px); } 
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        
+        .notification-modal .modal-header { 
+            padding: 1.5rem 2rem; border-bottom: 1px solid var(--border-light); 
+            display: flex; justify-content: space-between; align-items: center; 
+            background: rgba(255,255,255,0.01); 
+        }
+        .h-right-actions { display: flex; align-items: center; gap: 1.5rem; }
+        .clear-all-btn { background: none; border: 1px solid var(--border-light); color: var(--text-muted); padding: 5px 12px; border-radius: 8px; font-size: 0.75rem; cursor: pointer; transition: 0.3s; }
+        .clear-all-btn:hover { color: #ef4444; border-color: #ef4444; }
+        
+        .modal-header .h-left { display: flex; align-items: center; gap: 12px; }
+        .modal-header h3 { font-size: 1.1rem; font-weight: 300; letter-spacing: -0.01em; }
+        .modal-header .close-x { background: none; border: none; color: var(--text-muted); font-size: 1.8rem; cursor: pointer; transition: 0.3s; }
+        .modal-header .close-x:hover { color: #ef4444; }
+        
+        .modal-content-area { overflow-y: auto; padding: 1.5rem 2rem; }
+        .history-stack { display: flex; flex-direction: column; gap: 1rem; }
+        .empty-notif { text-align: center; color: var(--text-muted); font-size: 0.9rem; padding: 4rem 0; display: flex; flex-direction: column; align-items: center; }
+        
+        .history-card { 
+            padding: 1.25rem; border-radius: 18px; 
+            background: rgba(255,255,255,0.01); border: 1px solid var(--border-light); 
+            border-left: 4px solid transparent; transition: 0.3s;
+            position: relative;
+        }
+        .history-card:hover { transform: translateX(4px); background: rgba(255,255,255,0.02); }
+        .history-card.is-unread { background: rgba(129, 140, 248, 0.05); border-color: rgba(129, 140, 248, 0.2); }
+        
+        .h-right-meta { display: flex; align-items: center; gap: 8px; }
+        .unread-dot { width: 6px; height: 6px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 8px var(--primary); }
+
+        .history-card.info { border-left-color: var(--primary); }
+        .history-card.success { border-left-color: #10b981; }
+        .history-card.warning { border-left-color: #f59e0b; }
+        .history-card.error { border-left-color: #ef4444; }
+        
+        .h-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; }
+        .h-type { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); font-weight: 500; }
+        .h-time { font-size: 0.6rem; color: var(--text-muted); }
+        .h-msg { font-size: 0.9rem; line-height: 1.6; color: var(--text-main); font-weight: 300; }
 
         .view-scroll-area { flex: 1; padding: 0 3rem 3rem; overflow-y: auto; scrollbar-width: thin; }
         .mobile-header, .mobile-nav { display: none; }
