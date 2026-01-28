@@ -354,12 +354,34 @@ const Tracking = () => {
         return matchesSearch && matchesStatus;
     });
 
-    // Identify duplicates based on PAN or Aadhar
-    const duplicateCounts = clients.reduce((acc, c) => {
-        if (c.pan) acc[c.pan] = (acc[c.pan] || 0) + 1;
-        if (c.aadhar) acc[c.aadhar] = (acc[c.aadhar] || 0) + 1;
-        return acc;
-    }, {});
+    // Calculate attempt numbers for clients with the same PAN (ordered by created_at)
+    const getAttemptInfo = (client) => {
+        // Find all clients with the same PAN
+        const sameIdentifierClients = clients.filter(c =>
+            (c.pan && c.pan === client.pan) ||
+            (c.client_name && c.client_name.toLowerCase() === client.client_name?.toLowerCase())
+        );
+
+        if (sameIdentifierClients.length <= 1) return null;
+
+        // Sort by created_at ascending (oldest first)
+        const sorted = [...sameIdentifierClients].sort((a, b) =>
+            new Date(a.created_at) - new Date(b.created_at)
+        );
+
+        // Find the index of the current client
+        const attemptNumber = sorted.findIndex(c => c.id === client.id) + 1;
+        const totalAttempts = sorted.length;
+
+        // Ordinal suffix
+        const getOrdinal = (n) => {
+            const s = ["th", "st", "nd", "rd"];
+            const v = n % 100;
+            return n + (s[(v - 20) % 10] || s[v] || s[0]);
+        };
+
+        return { attemptNumber, totalAttempts, label: `${getOrdinal(attemptNumber)} Attempt` };
+    };
 
     return (
         <div className="tracking-view">
@@ -427,9 +449,14 @@ const Tracking = () => {
                                                     <span className="name">{client.client_name}</span>
                                                     <div className="tags-row">
                                                         <span className="loan-type-tag">{client.loan_type?.replace('_', ' ')}</span>
-                                                        {(duplicateCounts[client.pan] > 1 || (client.aadhar && duplicateCounts[client.aadhar] > 1)) && (
-                                                            <span className="duplicate-tag" title="Multiple entries found for this ID">DUPLICATE</span>
-                                                        )}
+                                                        {(() => {
+                                                            const attemptInfo = getAttemptInfo(client);
+                                                            return attemptInfo && (
+                                                                <span className="attempt-tag" title={`${attemptInfo.totalAttempts} total entries for this identity`}>
+                                                                    {attemptInfo.label}
+                                                                </span>
+                                                            );
+                                                        })()}
                                                     </div>
                                                 </div>
                                                 <span className="id">{client.company_name}</span>
@@ -503,11 +530,10 @@ const Tracking = () => {
                     letter-spacing: 0.05em; font-weight: 500;
                 }
 
-                .duplicate-tag {
-                    font-size: 0.55rem; color: #ef4444; background: rgba(239, 68, 68, 0.1);
+                .attempt-tag {
+                    font-size: 0.55rem; color: #f59e0b; background: rgba(245, 158, 11, 0.1);
                     padding: 2px 6px; border-radius: 4px; font-weight: 600;
-                    letter-spacing: 0.05em; border: 1px solid rgba(239, 68, 68, 0.2);
-                    animation: pulse-red 2s infinite;
+                    letter-spacing: 0.03em; border: 1px solid rgba(245, 158, 11, 0.2);
                 }
 
                 @keyframes pulse-red {

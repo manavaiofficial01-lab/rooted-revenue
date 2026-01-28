@@ -69,17 +69,21 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
     const handleFormSubmit = async (e) => {
         e.preventDefault();
         setLoading(true);
-        const panUpper = formData.pan.toUpperCase();
+        const panValue = formData.pan.trim().toUpperCase() || null;
+        const aadharValue = formData.aadhar.trim() || null;
 
         const currentUser = JSON.parse(localStorage.getItem('app_user'))?.name || 'Vicky';
 
         try {
-            // 1. Check if client with this PAN already exists
-            const { data: existing, error: checkError } = await supabase
-                .from('client_logins')
-                .select('id, loginned_by')
-                .eq('pan', panUpper)
-                .single();
+            let existing = null;
+            if (panValue) {
+                const { data } = await supabase
+                    .from('client_logins')
+                    .select('id, loginned_by')
+                    .eq('pan', panValue)
+                    .single();
+                existing = data;
+            }
 
             let targetId;
 
@@ -92,7 +96,7 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                         client_mobile: formData.client_mobile,
                         salary: parseFloat(formData.salary),
                         company_name: formData.company_name,
-                        aadhar: formData.aadhar || null,
+                        aadhar: aadharValue,
                         status: 'follow_up',
                         loginned_by: currentUser,
                         loan_type: loanType
@@ -110,8 +114,8 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                         client_mobile: formData.client_mobile,
                         salary: parseFloat(formData.salary),
                         company_name: formData.company_name,
-                        aadhar: formData.aadhar || null,
-                        pan: panUpper,
+                        aadhar: aadharValue,
+                        pan: panValue,
                         status: 'follow_up',
                         loginned_by: currentUser,
                         loan_type: loanType
@@ -384,10 +388,9 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                         </div>
                         <div className="grid-2">
                             <div className="input-group">
-                                <label>PAN Number</label>
+                                <label>PAN Number (Optional)</label>
                                 <input
                                     type="text"
-                                    required
                                     value={formData.pan}
                                     onChange={(e) => setFormData({ ...formData, pan: e.target.value })}
                                     placeholder="ABCDE1234F"

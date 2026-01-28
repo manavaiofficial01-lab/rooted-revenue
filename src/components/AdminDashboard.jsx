@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabase';
 import { BANK_LOGOS } from '../constants/banks';
+import ReportsExport from './ReportsExport';
 
 const AdminDashboard = ({ onLogout }) => {
     const QUESTION_MAP = {
@@ -257,7 +258,7 @@ const AdminDashboard = ({ onLogout }) => {
         <div className={`admin-container theme-${theme}`}>
             <aside className="admin-sidebar">
                 <div className="admin-brand">
-                    <div className="blob"></div>
+                    <img src="/logo.webp" alt="Logo" style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
                     <span>Manager Console</span>
                 </div>
 
@@ -291,6 +292,14 @@ const AdminDashboard = ({ onLogout }) => {
                         <button className={activeTab === 'notifications' ? 'active' : ''} onClick={() => { setActiveTab('notifications'); setSelectedEmployee(null); }}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
                             Announcements
+                        </button>
+                    </div>
+
+                    <div className="nav-group">
+                        <label>Analytics</label>
+                        <button className={activeTab === 'reports' ? 'active' : ''} onClick={() => { setActiveTab('reports'); setSelectedEmployee(null); }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                            Reports & Export
                         </button>
                     </div>
                 </nav>
@@ -375,7 +384,11 @@ const AdminDashboard = ({ onLogout }) => {
                                 <div key={emp.id} className="employee-card interactive" onClick={() => handleEmployeeClick(emp)}>
                                     <div className="emp-top">
                                         <div className="emp-avatar">
-                                            {emp.username.charAt(0)}
+                                            {emp.profile_pic ? (
+                                                <img src={emp.profile_pic} alt={emp.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '14px' }} />
+                                            ) : (
+                                                emp.username.charAt(0)
+                                            )}
                                             <div className="online-dot"></div>
                                         </div>
                                         <div className="emp-info">
@@ -449,13 +462,22 @@ const AdminDashboard = ({ onLogout }) => {
                 {activeTab === 'employees' && selectedEmployee && (
                     <div className="admin-view detail-view">
                         <header className="view-head">
-                            <div className="head-text">
-                                <button className="back-link" onClick={() => setSelectedEmployee(null)}>
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
-                                    Back to Global View
-                                </button>
-                                <h1>{selectedEmployee.username}'s Performance</h1>
-                                <p>Granular lifecycle tracking and intelligence audit.</p>
+                            <button className="back-link" onClick={() => setSelectedEmployee(null)}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
+                                Back to Global View
+                            </button>
+                            <div className="emp-expand-header">
+                                <div className="emp-expand-avatar">
+                                    {selectedEmployee.profile_pic ? (
+                                        <img src={selectedEmployee.profile_pic} alt={selectedEmployee.username} />
+                                    ) : (
+                                        selectedEmployee.username.charAt(0)
+                                    )}
+                                </div>
+                                <div className="head-text">
+                                    <h1>{selectedEmployee.username}'s Performance</h1>
+                                    <p>Granular lifecycle tracking and intelligence audit.</p>
+                                </div>
                             </div>
                         </header>
 
@@ -870,10 +892,12 @@ const AdminDashboard = ({ onLogout }) => {
                         <style>{`
                             .notifications-layout { display: grid; grid-template-columns: 1fr 400px; gap: 2rem; margin-top: 1rem; }
                             
+                            .glass-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 24px; box-shadow: var(--shadow); color: var(--text); }
+                            
                             .composer-container { padding: 2.5rem; }
-                            .composer-head { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 2.5rem; }
+                            .composer-head { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 2.5rem; color: var(--text); }
                             .c-icon-bg { width: 50px; height: 50px; border-radius: 14px; background: var(--primary-glow); color: var(--primary); display: flex; align-items: center; justify-content: center; }
-                            .c-title h3 { font-size: 1.4rem; font-weight: 300; margin-bottom: 2px; }
+                            .c-title h3 { font-size: 1.4rem; font-weight: 300; margin-bottom: 2px; color: var(--text); }
                             .c-title p { font-size: 0.85rem; color: var(--text-muted); }
 
                             .broadcast-form-premium { display: flex; flex-direction: column; gap: 1.5rem; }
@@ -883,12 +907,12 @@ const AdminDashboard = ({ onLogout }) => {
                             
                             .custom-dropdown-wrap { position: relative; width: 100%; }
                             .custom-select-trigger { 
-                                background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-light); 
+                                background: var(--input-bg); border: 1px solid var(--border); 
                                 border-radius: 14px; padding: 1rem 1.2rem; color: var(--text-main); font-family: 'Outfit';
                                 display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: 0.3s;
                                 min-height: 54px;
                             }
-                            .custom-select-trigger:hover, .custom-select-trigger.active { border-color: var(--primary); background: rgba(255,255,255,0.05); }
+                            .custom-select-trigger:hover, .custom-select-trigger.active { border-color: var(--primary); background: var(--input-bg); }
                             .custom-select-trigger svg { transition: 0.3s; opacity: 0.5; }
                             .custom-select-trigger.active svg { transform: rotate(180deg); opacity: 1; color: var(--primary); }
 
@@ -901,7 +925,7 @@ const AdminDashboard = ({ onLogout }) => {
                                 padding: 0.8rem 1.2rem; cursor: pointer; transition: 0.2s; font-size: 0.9rem; color: var(--text-muted);
                                 display: flex; align-items: center; gap: 10px;
                             }
-                            .option-item:hover { background: rgba(255,255,255,0.03); color: var(--text-main); padding-left: 1.5rem; }
+                            .option-item:hover { background: var(--input-bg); color: var(--text); padding-left: 1.5rem; }
                             
                             .p-indicator { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
                             .p-indicator.info { background: var(--primary); box-shadow: 0 0 10px var(--primary); }
@@ -910,12 +934,12 @@ const AdminDashboard = ({ onLogout }) => {
                             .p-indicator.error { background: #ef4444; box-shadow: 0 0 10px #ef4444; }
 
                             .input-group-n textarea { 
-                                background: rgba(255, 255, 255, 0.01); border: 1px solid var(--border-light); 
+                                background: var(--input-bg); border: 1px solid var(--border); 
                                 border-radius: 16px; padding: 1.2rem; color: var(--text-main); font-family: 'Outfit'; outline: none; transition: 0.3s;
                                 font-size: 1rem; line-height: 1.6;
                             }
-                            .input-group-n textarea:focus { border-color: var(--primary); background: rgba(255,255,255,0.03); }
-                            .input-group-n textarea::placeholder { color: rgba(255,255,255,0.2); }
+                            .input-group-n textarea:focus { border-color: var(--primary); background: var(--input-bg); }
+                            .input-group-n textarea::placeholder { color: var(--text-muted); opacity: 0.5; }
 
                             .dispatch-action-area { margin-top: 1rem; display: flex; justify-content: center; width: 100%; }
                             .premium-dispatch-btn { 
@@ -935,12 +959,12 @@ const AdminDashboard = ({ onLogout }) => {
                             .refresh-mini:hover { color: var(--primary); border-color: var(--primary); }
 
                             .sent-notif-list { overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; padding-right: 0.5rem; }
-                            .sent-notif-card { padding: 1.2rem; border-radius: 18px; border: 1px solid var(--border-light); background: rgba(255,255,255,0.01); transition: 0.3s; }
-                            .sent-notif-card:hover { background: rgba(255,255,255,0.02); }
+                            .sent-notif-card { padding: 1.2rem; border-radius: 18px; border: 1px solid var(--border); background: var(--card-bg); transition: 0.3s; }
+                            .sent-notif-card:hover { background: var(--input-bg); }
                             
                             .sn-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem; }
                             .sn-top-actions { display: flex; align-items: center; gap: 12px; }
-                            .sn-type { font-size: 0.55rem; font-weight: 600; text-transform: uppercase; padding: 2px 8px; border-radius: 6px; background: rgba(255,255,255,0.05); color: var(--text-muted); }
+                            .sn-type { font-size: 0.55rem; font-weight: 600; text-transform: uppercase; padding: 2px 8px; border-radius: 6px; background: var(--input-bg); color: var(--text-muted); }
                             .status-tag-mini { display: flex; align-items: center; gap: 4px; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }
                             .status-tag-mini.sent { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
                             .status-tag-mini.received { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
@@ -971,6 +995,8 @@ const AdminDashboard = ({ onLogout }) => {
                         `}</style>
                     </div>
                 )}
+
+                {activeTab === 'reports' && <ReportsExport allLogins={allLogins} />}
             </main>
 
             {showUserModal && (
@@ -1124,7 +1150,7 @@ const AdminDashboard = ({ onLogout }) => {
                                     <p>Detailed Lead Logic & Verification</p>
                                 </div>
                             </div>
-                            <button className="close-modal" onClick={() => setShowClientModal(false)}>×</button>
+                            <button className="close-modal" onClick={() => setShowClientModal(false)} style={{ fontSize: '1.2rem', padding: '10px' }}>×</button>
                         </div>
 
                         <div className="audit-content">
@@ -1225,15 +1251,22 @@ const AdminDashboard = ({ onLogout }) => {
                     --admin-border-light: #e2e8f0;
                     --admin-card-dark: rgba(255,255,255,0.02);
                     --admin-card-light: #ffffff;
+                    --primary: #6366f1;
+                    --accent: #a855f7;
                 }
 
                 .admin-container.theme-dark {
                     --bg: var(--admin-bg-dark);
                     --sidebar-bg: var(--admin-sidebar-dark);
                     --text: var(--admin-text-dark);
+                    --text-main: var(--admin-text-dark);
                     --text-muted: var(--admin-muted-dark);
                     --border: var(--admin-border-dark);
+                    --border-light: var(--admin-border-dark);
                     --card-bg: var(--admin-card-dark);
+                    --bg-side: #0f172a;
+                    --input-bg: rgba(255, 255, 255, 0.03);
+                    --primary-glow: rgba(99, 102, 241, 0.2);
                     --shadow: none;
                 }
 
@@ -1241,10 +1274,15 @@ const AdminDashboard = ({ onLogout }) => {
                     --bg: var(--admin-bg-light);
                     --sidebar-bg: var(--admin-sidebar-light);
                     --text: var(--admin-text-light);
+                    --text-main: var(--admin-text-light);
                     --text-muted: var(--admin-muted-light);
                     --border: var(--admin-border-light);
+                    --border-light: var(--admin-border-light);
                     --card-bg: var(--admin-card-light);
-                    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+                    --bg-side: #f1f5f9;
+                    --input-bg: rgba(0, 0, 0, 0.04);
+                    --primary-glow: rgba(99, 102, 241, 0.2);
+                    --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
                 }
 
                 .admin-container { 
@@ -1268,7 +1306,6 @@ const AdminDashboard = ({ onLogout }) => {
                 .theme-toggle:hover { background: var(--border); color: var(--text); }
                 
                 .admin-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 3rem; }
-                .blob { width: 12px; height: 12px; background: #6366f1; border-radius: 4px; transform: rotate(45deg); }
                 .admin-brand span { font-weight: 200; font-size: 1.1rem; letter-spacing: -0.02em; }
                 
                 .admin-nav { display: flex; flex-direction: column; gap: 20px; margin-bottom: 2rem; }
@@ -1280,6 +1317,23 @@ const AdminDashboard = ({ onLogout }) => {
                     color: var(--text-muted); padding: 0.8rem 1rem; border-radius: 12px; cursor: pointer; 
                     transition: 0.3s; font-size: 0.9rem; text-align: left;
                 }
+                .back-link {
+                    display: inline-flex; align-items: center; gap: 10px;
+                    background: var(--input-bg); border: 1px solid var(--border);
+                    color: var(--text); padding: 0.6rem 1.2rem; border-radius: 100px;
+                    cursor: pointer; font-size: 0.85rem; font-weight: 500;
+                    margin-bottom: 2rem; transition: 0.2s;
+                }
+                .back-link:hover { background: var(--border); transform: translateX(-4px); }
+                
+                .emp-expand-header { display: flex; align-items: center; gap: 20px; margin-bottom: 2rem; }
+                .emp-expand-avatar { 
+                    width: 64px; height: 64px; background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); 
+                    border-radius: 20px; display: flex; align-items: center; justify-content: center;
+                    color: white; font-size: 1.5rem; font-weight: 600; box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3);
+                    overflow: hidden;
+                }
+                .emp-expand-avatar img { width: 100%; height: 100%; object-fit: cover; }
                 .admin-nav button:hover { background: var(--border); color: var(--text); }
                 .admin-nav button.active { background: rgba(99, 102, 241, 0.1); color: #6366f1; font-weight: 500; }
                 
@@ -1418,7 +1472,7 @@ const AdminDashboard = ({ onLogout }) => {
                 .match-tag { font-size: 0.6rem; font-weight: 600; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.02em; }
                 .match-tag.result { background: rgba(16, 185, 129, 0.1); color: #10b981; }
                 .match-tag.probable { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
-                .match-tag.none { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
+                .match-tag.none { background: var(--input-bg); color: var(--text-muted); }
 
                 .status-container { display: flex; align-items: center; justify-content: flex-end; gap: 15px; }
                 .status-pill.filled { 
@@ -1439,10 +1493,10 @@ const AdminDashboard = ({ onLogout }) => {
                 .row-action-btn:hover { background: #6366f1; color: white !important; transform: scale(1.1); }
                 .pointer { cursor: pointer; }
 
-                .audit-modal { width: 800px !important; }
-                .audit-content { display: flex; flex-direction: column; gap: 2.5rem; padding-bottom: 1rem; }
-                .audit-grid-split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-                .audit-box { background: rgba(255,255,255,0.02); border: 1px solid var(--border); padding: 1.5rem; border-radius: 20px; }
+                .audit-modal { width: 850px !important; max-width: 95vw; padding: 1.5rem 2rem !important; }
+                .audit-content { display: flex; flex-direction: column; gap: 1rem; padding-bottom: 0; }
+                .audit-grid-split { display: grid; grid-template-columns: 1.2fr 1fr; gap: 1.2rem; align-items: stretch; }
+                .audit-box { background: var(--input-bg); border: 1px solid var(--border); padding: 1.2rem; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; }
                 
                 .match-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1rem; }
                 .match-item { 
@@ -1453,7 +1507,7 @@ const AdminDashboard = ({ onLogout }) => {
                 .match-item.probable { background: rgba(99, 102, 241, 0.1); color: #6366f1; border-color: rgba(99, 102, 241, 0.2); }
                 .none-text { font-size: 0.8rem; color: var(--text-muted); font-style: italic; }
 
-                .audit-footer-stats { display: flex; justify-content: space-between; align-items: center; padding: 1.5rem; background: rgba(255,255,255,0.02); border-radius: 20px; border: 1px solid var(--border); }
+                .audit-footer-stats { display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--input-bg); border-radius: 14px; border: 1px solid var(--border); }
                 .f-stat label { display: block; font-size: 0.6rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; letter-spacing: 0.05em; font-weight: 600; }
                 .f-stat span { font-size: 1rem; font-weight: 500; }
 
@@ -1495,14 +1549,14 @@ const AdminDashboard = ({ onLogout }) => {
                 .status-tag.rejected { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
                 .status-tag.follow_up { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
 
-                .h-qa-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-bottom: 2rem; }
+                .h-qa-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 0.5rem; }
                 .qa-pill-detailed { 
-                    background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); 
-                    padding: 0.8rem 1rem; border-radius: 12px; display: flex; justify-content: space-between; align-items: center;
+                    background: var(--input-bg); border: 1px solid var(--border); 
+                    padding: 0.6rem 0.8rem; border-radius: 10px; display: flex; justify-content: space-between; align-items: center;
                 }
                 .qa-label-wrap { display: flex; flex-direction: column; gap: 2px; }
                 .q-id { font-size: 0.55rem; color: #64748b; font-weight: 600; text-transform: uppercase; }
-                .q-text { font-size: 0.75rem; color: #cbd5e1; font-weight: 300; }
+                .q-text { font-size: 0.75rem; color: var(--text); font-weight: 300; }
                 .a-val { font-size: 0.8rem; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
                 .a-val.pass { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
                 .a-val.fail { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
@@ -1537,16 +1591,16 @@ const AdminDashboard = ({ onLogout }) => {
                 .edit-action:hover { text-decoration: underline; }
 
                 .policy-modal { width: 750px !important; }
-                .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
-                .modal-title-wrap { display: flex; align-items: center; gap: 18px; }
-                .modal-title-wrap h2 { font-size: 1.6rem; font-weight: 200; }
+                .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+                .modal-title-wrap { display: flex; align-items: center; gap: 12px; }
+                .modal-title-wrap h2 { font-size: 1.4rem; font-weight: 300; }
                 .modal-title-wrap p { font-size: 0.9rem; color: var(--text-muted); }
                 .close-modal { background: none; border: none; color: var(--text-muted); font-size: 1.8rem; cursor: pointer; transition: 0.3s; }
                 .close-modal:hover { color: #f43f5e; }
 
                 .form-scrollable { max-height: 55vh; overflow-y: auto; padding-right: 20px; margin-bottom: 2rem; scrollbar-width: thin; }
                 .form-section { margin-bottom: 2.5rem; }
-                .section-label { display: block; font-size: 0.7rem; font-weight: 700; color: #6366f1; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.8rem; }
+                .section-label { display: block; font-size: 0.7rem; font-weight: 700; color: #6366f1; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
                 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
                 
                 .policy-form input, .policy-form textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); padding: 1rem; border-radius: 14px; color: var(--text); outline: none; transition: 0.3s; font-family: inherit; font-size: 0.9rem; }
@@ -1567,10 +1621,10 @@ const AdminDashboard = ({ onLogout }) => {
                 .empty-history p { font-size: 0.85rem; max-width: 250px; line-height: 1.5; }
 
                 .admin-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); display: flex; align-items: center; justify-content: center; z-index: 2000; }
-                .admin-modal { background: #0f172a; width: 450px; border-radius: 28px; padding: 2.5rem; border: 1px solid rgba(255,255,255,0.1); }
+                .admin-modal { background: var(--bg-side); width: 450px; border-radius: 28px; padding: 2.5rem; border: 1px solid var(--border); box-shadow: var(--shadow); }
                 .modal-input { margin-bottom: 1.5rem; }
-                .modal-input label { display: block; font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; margin-bottom: 0.6rem; }
-                .modal-input input { width: 100%; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); padding: 1rem; border-radius: 12px; color: #fff; outline: none; }
+                .modal-input label { display: block; font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.6rem; }
+                .modal-input input { width: 100%; background: var(--input-bg); border: 1px solid var(--border); padding: 1rem; border-radius: 12px; color: var(--text); outline: none; }
                 .modal-input input:focus { border-color: #6366f1; }
                 
                 .password-wrap { position: relative; display: flex; align-items: center; }
@@ -1579,8 +1633,8 @@ const AdminDashboard = ({ onLogout }) => {
                 .admin-mobile-header { display: none; }
                 .admin-mobile-nav { display: none; }
 
-                .modal-actions { display: flex; gap: 1rem; margin-top: 2rem; }
-                .cancel-btn { flex: 1; padding: 1rem; background: transparent; border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 12px; cursor: pointer; }
+                .modal-actions { display: flex; gap: 1rem; margin-top: 1rem; }
+                .cancel-btn { flex: 1; padding: 1rem; background: transparent; border: 1px solid var(--border); color: var(--text); border-radius: 12px; cursor: pointer; }
                 .save-btn { flex: 1.5; padding: 1rem; background: #6366f1; border: none; color: #fff; border-radius: 12px; cursor: pointer; }
 
                 @media (max-width: 1200px) {

@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import { supabase } from '../../supabase';
+import { storage } from '../../firebase.config';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 const Dashboard = ({ onLogout, user, children }) => {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
@@ -9,7 +11,15 @@ const Dashboard = ({ onLogout, user, children }) => {
   const [showHistory, setShowHistory] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const displayName = user?.username || user?.email?.split('@')[0] || 'User';
+  const [localUser, setLocalUser] = useState(user);
+  const fileInputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    setLocalUser(user);
+  }, [user]);
+
+  const displayName = localUser?.username || localUser?.email?.split('@')[0] || 'User';
   const initials = displayName.substring(0, 2).toUpperCase();
 
   useEffect(() => {
@@ -117,6 +127,44 @@ const Dashboard = ({ onLogout, user, children }) => {
     }
   };
 
+  const handleProfilePicClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !localUser) return;
+
+    try {
+      setUploading(true);
+      const storageRef = ref(storage, `profile_pics/${localUser.username}_${Date.now()}`);
+      await uploadBytes(storageRef, file);
+      const profilePicUrl = await getDownloadURL(storageRef);
+
+      const { error } = await supabase
+        .from('users')
+        .update({ profile_pic: profilePicUrl })
+        .eq('id', localUser.id);
+
+      if (error) throw error;
+
+      const updatedUser = { ...localUser, profile_pic: profilePicUrl };
+      setLocalUser(updatedUser);
+      // Update localStorage if applicable
+      const storedUser = JSON.parse(localStorage.getItem('app_user'));
+      if (storedUser) {
+        localStorage.setItem('app_user', JSON.stringify({ ...storedUser, profile_pic: profilePicUrl }));
+      }
+
+      showToaster("Profile picture updated successfully!", "success");
+    } catch (err) {
+      console.error('Profile pic upload failed:', err);
+      showToaster("Failed to upload profile picture.", "error");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleClearHistory = () => {
     if (confirm('Clear all announcements from your view? (This will not delete them for others)')) {
       setHistory([]);
@@ -150,7 +198,7 @@ const Dashboard = ({ onLogout, user, children }) => {
     <div className="dash-container">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className="brand-blob"></div>
+          <img src="/logo.webp" alt="Logo" style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
           <span>Rooted Revenue</span>
         </div>
 
@@ -170,9 +218,25 @@ const Dashboard = ({ onLogout, user, children }) => {
 
         <div className="sidebar-footer">
           <div className="profile-glass">
-            <div className="av-hex">{initials}</div>
+            <div className={`av-hex ${uploading ? 'uploading' : ''}`} onClick={handleProfilePicClick}>
+              {localUser?.profile_pic ? (
+                <img src={localUser.profile_pic} alt={displayName} className="avatar-img" />
+              ) : (
+                initials
+              )}
+              <div className="edit-overlay">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+              </div>
+              <input
+                type="file"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                accept="image/*"
+                onChange={handleFileChange}
+              />
+            </div>
             <div className="prof-info">
-              <span className="p-name">{displayName}</span>
+              <span className="p-name clickable" onClick={handleProfilePicClick}>{displayName}</span>
               <span className="p-status">Online</span>
             </div>
           </div>
@@ -305,7 +369,6 @@ const Dashboard = ({ onLogout, user, children }) => {
         }
 
         .sidebar-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 2.5rem; }
-        .brand-blob { width: 18px; height: 18px; background: var(--primary); border-radius: 5px; transform: rotate(45deg); box-shadow: 0 0 10px var(--primary-glow); }
         .sidebar-brand span { font-size: 1rem; font-weight: 300; letter-spacing: -0.01em; }
 
         .nav-group { flex: 1; display: flex; flex-direction: column; gap: 2px; }
@@ -323,9 +386,30 @@ const Dashboard = ({ onLogout, user, children }) => {
 
         .sidebar-footer { margin-top: auto; display: flex; flex-direction: column; gap: 0.75rem; }
         .profile-glass { display: flex; align-items: center; gap: 10px; padding: 0.6rem; background: rgba(255, 255, 255, 0.01); border: 1px solid var(--border-light); border-radius: 14px; }
-        .av-hex { width: 32px; height: 32px; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; border-radius: 8px; }
+        .av-hex {
+          width: 38px; height: 38px; border-radius: 10px;
+          background: linear-gradient(135deg, var(--primary) 0%, #a855f7 100%);
+          display: flex; align-items: center; justify-content: center;
+          font-weight: 600; font-size: 0.8rem; color: white;
+          flex-shrink: 0; position: relative; cursor: pointer; overflow: hidden;
+        }
+        .avatar-img { width: 100%; height: 100%; object-fit: cover; }
+        .edit-overlay {
+          position: absolute; inset: 0; background: rgba(0,0,0,0.5);
+          display: flex; align-items: center; justify-content: center;
+          opacity: 0; transition: 0.3s;
+        }
+        .av-hex:hover .edit-overlay { opacity: 1; }
+        .av-hex.uploading::after {
+          content: ""; position: absolute; inset: 0;
+          background: rgba(0,0,0,0.3); backdrop-filter: blur(2px);
+          border: 2px solid var(--primary); animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
         .prof-info { display: flex; flex-direction: column; }
-        .p-name { font-size: 0.8rem; font-weight: 300; }
+        .p-name { font-size: 0.8rem; font-weight: 300; transition: color 0.3s; }
+        .p-name.clickable { cursor: pointer; }
+        .p-name.clickable:hover { color: var(--primary); text-decoration: underline; }
         .p-status { font-size: 0.6rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; }
 
         .utility-row { display: flex; gap: 8px; }
