@@ -259,7 +259,7 @@ const Dashboard = ({ onLogout, user, children }) => {
       <main className="viewport">
         <header className="mobile-header">
           <div className="sidebar-brand">
-            <div className="brand-blob"></div>
+            <img src="/logo.webp" alt="Logo" style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
             <span>Rooted Revenue</span>
           </div>
           <button className="util-btn logout" onClick={onLogout}>

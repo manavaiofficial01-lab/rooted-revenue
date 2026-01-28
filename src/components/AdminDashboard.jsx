@@ -321,7 +321,7 @@ const AdminDashboard = ({ onLogout }) => {
 
             <header className="admin-mobile-header">
                 <div className="admin-brand">
-                    <div className="blob"></div>
+                    <img src="/logo.webp" alt="Logo" style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
                     <span>Manager</span>
                 </div>
                 <button className="logout-btn" onClick={onLogout}>
