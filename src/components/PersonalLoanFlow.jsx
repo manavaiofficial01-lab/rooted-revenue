@@ -34,6 +34,28 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
     const [probableBanks, setProbableBanks] = useState([]);
     const [liveEligibleBanks, setLiveEligibleBanks] = useState({ primary: ALL_BANKS, alternate: [] });
     const [isShuffling, setIsShuffling] = useState(false);
+    const [dbQuestions, setDbQuestions] = useState([]);
+
+    useEffect(() => {
+        const fetchQuestions = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('personal_questions')
+                    .select('*')
+                    .eq('is_active', true)
+                    .order('sort_order', { ascending: true });
+
+                if (error) throw error;
+                if (data && data.length > 0) {
+                    setDbQuestions(data);
+                }
+            } catch (err) {
+                console.error('Failed to fetch questions:', err);
+                // Fallback will be handled by rendering logic
+            }
+        };
+        fetchQuestions();
+    }, []);
 
     const [calcData, setCalcData] = useState({
         salary: '',
@@ -139,42 +161,35 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
         const scores = {};
         ALL_BANKS.forEach(bank => scores[bank] = 0);
 
-        const rules = [
-            { id: 'q3', yes: ALL_BANKS, no: ["INCRED/FINABLE"] },
-            { id: 'q4', yes: ["ICICI BANK", "IDFC BANK", "YES BANK", "HDFC BANK", "AXIS BANK", "AXIS FINANCE", "ADITYA BIRLA"], no: ["PRIMAL", "CHOLA", "SRIRAM", "TATA CAPITAL", "BAJAJ", "POONAWALA", "INCRED/FINABLE", "SMFG", "UTKARSH"] },
-            { id: 'q5', yes: ["ICICI BANK", "HDFC BANK", "BAJAJ", "POONAWALA", "SRIRAM", "YES BANK", "AXIS BANK"], no: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "INCRED/FINABLE", "SMFG", "AXIS FINANCE", "IDFC BANK", "YES BANK"] },
-            { id: 'q6', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"], no: ["INCRED/FINABLE", "SMFG", "SRIRAM", "POONAWALA", "AXIS FINANCE"] },
-            { id: 'q7', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "POONAWALA", "SMFG", "AXIS FINANCE"], no: ["INCRED/FINABLE", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"] }
-        ];
+        // Use DB-driven rules if available, otherwise fallback
+        const ruleSources = dbQuestions.length > 0 ? dbQuestions : [];
+        let ruleCount = 0;
 
-        let baseBanks = [...ALL_BANKS];
-
-        // If applicant has a bounce (q8 = 'Yes'), it's an immediate rejection across all partners
-        if (currentAnswers.q8 === 'Yes') {
-            return { banks: [], probable: [], reasons: [{ q: "Recent Cheque Bounce (Last 6 Months)", lost: ALL_BANKS }] };
-        }
-
-        const reasons = [];
-        baseBanks.forEach(bank => {
-            rules.forEach(rule => {
-                const targetList = currentAnswers[rule.id] === 'Yes'
-                    ? [...new Set([...rule.yes, ...rule.no])]
-                    : rule.no;
-
-                if (targetList.includes(bank)) {
-                    scores[bank] += 1;
-                }
-            });
+        ruleSources.forEach(rule => {
+            const ans = currentAnswers[rule.key];
+            if (ans !== null) {
+                ruleCount++;
+                const eligibleBanks = ans === 'Yes' ? (rule.yes_eligible_banks || []) : (rule.no_eligible_banks || []);
+                ALL_BANKS.forEach(bank => {
+                    if (eligibleBanks.includes(bank)) scores[bank]++;
+                });
+            }
         });
 
-        const strictBanks = baseBanks.filter(bank => scores[bank] === rules.length);
-        const probableBanks = baseBanks.filter(bank => scores[bank] === rules.length - 1 && !strictBanks.includes(bank));
+        // If no rules were loaded/used, return all as fallback
+        if (ruleCount === 0) return { banks: ALL_BANKS, probable: [], reasons: [] };
 
+        const strictBanks = ALL_BANKS.filter(bank => scores[bank] === ruleCount);
+        const probableBanks = ALL_BANKS.filter(bank => scores[bank] === ruleCount - 1 && ruleCount > 1 && !strictBanks.includes(bank));
+
+        const reasons = [];
         if (strictBanks.length === 0) {
-            rules.forEach(rule => {
-                const targetList = currentAnswers[rule.id] === 'Yes' ? rule.yes : rule.no;
-                const rejected = baseBanks.filter(b => !targetList.includes(b));
-                if (rejected.length > 0) reasons.push({ q: rule.id, lost: rejected });
+            ruleSources.forEach(rule => {
+                if (currentAnswers[rule.key] !== null) {
+                    const eligible = currentAnswers[rule.key] === 'Yes' ? (rule.yes_eligible_banks || []) : (rule.no_eligible_banks || []);
+                    const rejected = ALL_BANKS.filter(b => !eligible.includes(b));
+                    if (rejected.length > 0) reasons.push({ q: rule.label || rule.key, lost: rejected });
+                }
             });
         }
 
@@ -186,34 +201,28 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
     };
 
     const getLiveBanks = (currentAnswers) => {
-        const rules = [
-            { id: 'q3', yes: ALL_BANKS, no: ["INCRED/FINABLE"] },
-            { id: 'q4', yes: ["ICICI BANK", "IDFC BANK", "YES BANK", "HDFC BANK", "AXIS BANK", "AXIS FINANCE", "ADITYA BIRLA"], no: ["PRIMAL", "CHOLA", "SRIRAM", "TATA CAPITAL", "BAJAJ", "POONAWALA", "INCRED/FINABLE", "SMFG", "UTKARSH"] },
-            { id: 'q5', yes: ["ICICI BANK", "HDFC BANK", "BAJAJ", "POONAWALA", "SRIRAM", "YES BANK", "AXIS BANK"], no: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "INCRED/FINABLE", "SMFG", "AXIS FINANCE", "IDFC BANK", "YES BANK"] },
-            { id: 'q6', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"], no: ["INCRED/FINABLE", "SMFG", "SRIRAM", "POONAWALA", "AXIS FINANCE"] },
-            { id: 'q7', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "POONAWALA", "SMFG", "AXIS FINANCE"], no: ["INCRED/FINABLE", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"] }
-        ];
-
-        if (currentAnswers.q8 === 'Yes') return { primary: [], alternate: [] };
-
         const scores = {};
         ALL_BANKS.forEach(bank => scores[bank] = 0);
-        let answeredCount = 0;
 
-        rules.forEach(rule => {
-            const ans = currentAnswers[rule.id];
+        const ruleSources = dbQuestions.length > 0 ? dbQuestions : [];
+        let ruleCount = 0;
+
+        ruleSources.forEach(rule => {
+            const ans = currentAnswers[rule.key];
             if (ans !== null) {
-                answeredCount++;
-                const targetList = ans === 'Yes' ? [...new Set([...rule.yes, ...rule.no])] : rule.no;
+                ruleCount++;
+                const eligibleBanks = ans === 'Yes' ? (rule.yes_eligible_banks || []) : (rule.no_eligible_banks || []);
                 ALL_BANKS.forEach(bank => {
-                    if (targetList.includes(bank)) scores[bank]++;
+                    if (eligibleBanks.includes(bank)) scores[bank]++;
                 });
             }
         });
 
+        if (ruleCount === 0) return { primary: ALL_BANKS, alternate: [] };
+
         return {
-            primary: ALL_BANKS.filter(bank => scores[bank] === answeredCount),
-            alternate: ALL_BANKS.filter(bank => scores[bank] === answeredCount - 1 && answeredCount > 0)
+            primary: ALL_BANKS.filter(bank => scores[bank] === ruleCount),
+            alternate: ALL_BANKS.filter(bank => scores[bank] === ruleCount - 1 && ruleCount > 0)
         };
     };
 
@@ -221,7 +230,7 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
         const newAnswers = { ...answers, [q]: val };
         setAnswers(newAnswers);
 
-        // Update live filtering
+        // Update live filtering animations local-only
         setIsShuffling(true);
         const live = getLiveBanks(newAnswers);
         setLiveEligibleBanks(live);
@@ -232,6 +241,26 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
             setEligibleBanks(eligible);
             setProbableBanks(probable);
             saveAnswers(newAnswers, eligible, probable, reasons);
+        }
+    };
+
+    const saveAnswers = async (finalAnswers, eligible, probable, reasons) => {
+        try {
+            const yesArr = Object.entries(finalAnswers).filter(([k, v]) => v === 'Yes').map(([k, v]) => k);
+            const noArr = Object.entries(finalAnswers).filter(([k, v]) => v === 'No').map(([k, v]) => k);
+
+            await supabase
+                .from('client_logins')
+                .update({
+                    questions: { ...finalAnswers, results: eligible, probable: probable, reasons: reasons },
+                    yes_answers: yesArr,
+                    no_answers: noArr,
+                    // Rejection logic: No eligible OR probable banks identified, or hard rejection condition met
+                    status: eligible.length > 0 || probable.length > 0 ? 'follow_up' : 'rejected'
+                })
+                .eq('id', clientId);
+        } catch (error) {
+            console.error('Error updating answers:', error.message);
         }
     };
 
@@ -250,21 +279,6 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
         const live = getLiveBanks(newAnswers);
         setLiveEligibleBanks(live);
         setTimeout(() => setIsShuffling(false), 600);
-    };
-
-    const saveAnswers = async (finalAnswers, eligible, probable, reasons) => {
-        try {
-            await supabase
-                .from('client_logins')
-                .update({
-                    questions: { ...finalAnswers, results: eligible, probable: probable, reasons: reasons },
-                    // Rejection logic: No eligible OR probable banks identified, or hard rejection condition met
-                    status: eligible.length > 0 || probable.length > 0 ? 'follow_up' : 'rejected'
-                })
-                .eq('id', clientId);
-        } catch (error) {
-            console.error('Error updating answers:', error.message);
-        }
     };
 
     const handleFinalConfirm = async () => {
@@ -439,77 +453,97 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                             </div>
 
                             <div className="quest-body">
-                                {currentQIndex === 0 && (
-                                    <div className="q-item animate-fade">
-                                        <p>Do you have a Gold Loan currently active?</p>
-                                        <div className="q-btns">
-                                            <button onClick={() => handleAnswer('q1', 'Yes')}>YES, I DO</button>
-                                            <button onClick={() => handleAnswer('q1', 'No')}>NO, I DON'T</button>
-                                        </div>
-                                    </div>
-                                )}
-                                {currentQIndex === 1 && (
-                                    <div className="q-item animate-fade">
-                                        <p>Do you currently have an active Credit Card?</p>
-                                        <div className="q-btns">
-                                            <button onClick={() => handleAnswer('q2', 'Yes')}>YES</button>
-                                            <button onClick={() => handleAnswer('q2', 'No')}>NO</button>
-                                        </div>
-                                    </div>
-                                )}
-                                {currentQIndex === 2 && (
-                                    <div className="q-item animate-fade">
-                                        <p>Does the applicant have the last 3 months' pay slips?</p>
-                                        <div className="q-btns">
-                                            <button onClick={() => handleAnswer('q3', 'Yes')}>YES</button>
-                                            <button onClick={() => handleAnswer('q3', 'No')}>NO</button>
-                                        </div>
-                                    </div>
-                                )}
-                                {currentQIndex === 3 && (
-                                    <div className="q-item animate-fade">
-                                        <p>Does the applicant have a CIBIL score more than 700?</p>
-                                        <div className="q-btns">
-                                            <button onClick={() => handleAnswer('q4', 'Yes')}>YES</button>
-                                            <button onClick={() => handleAnswer('q4', 'No')}>NO</button>
-                                        </div>
-                                    </div>
-                                )}
-                                {currentQIndex === 4 && (
-                                    <div className="q-item animate-fade">
-                                        <p>Is the monthly salary more than ₹25,000?</p>
-                                        <div className="q-btns">
-                                            <button onClick={() => handleAnswer('q5', 'Yes')}>YES</button>
-                                            <button onClick={() => handleAnswer('q5', 'No')}>NO</button>
-                                        </div>
-                                    </div>
-                                )}
-                                {currentQIndex === 5 && (
-                                    <div className="q-item animate-fade">
-                                        <p>Does the applicant have PF/PT deductions in their company?</p>
-                                        <div className="q-btns">
-                                            <button onClick={() => handleAnswer('q6', 'Yes')}>YES</button>
-                                            <button onClick={() => handleAnswer('q6', 'No')}>NO</button>
-                                        </div>
-                                    </div>
-                                )}
-                                {currentQIndex === 6 && (
-                                    <div className="q-item animate-fade">
-                                        <p>Does the applicant have a Residence Address Proof?</p>
-                                        <div className="q-btns">
-                                            <button onClick={() => handleAnswer('q7', 'Yes')}>YES</button>
-                                            <button onClick={() => handleAnswer('q7', 'No')}>NO</button>
-                                        </div>
-                                    </div>
-                                )}
-                                {currentQIndex === 7 && (
-                                    <div className="q-item animate-fade">
-                                        <p>Does the applicant have any cheque bounces in the last 6 months?</p>
-                                        <div className="q-btns">
-                                            <button onClick={() => handleAnswer('q8', 'Yes')}>YES</button>
-                                            <button onClick={() => handleAnswer('q8', 'No')}>NO</button>
-                                        </div>
-                                    </div>
+                                {dbQuestions.length > 0 ? (
+                                    dbQuestions.map((q, idx) => (
+                                        currentQIndex === idx && (
+                                            <div key={q.id} className="q-item animate-fade">
+                                                <p>{q.question_text}</p>
+                                                <div className="q-btns">
+                                                    {q.options?.map(opt => (
+                                                        <button key={opt} onClick={() => handleAnswer(q.key, opt)}>
+                                                            {opt === 'Yes' ? (q.key === 'q1' ? 'YES, I DO' : 'YES') : (q.key === 'q1' ? "NO, I DON'T" : 'NO')}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )
+                                    ))
+                                ) : (
+                                    // Fallback to static questions if DB fails or is empty
+                                    <>
+                                        {currentQIndex === 0 && (
+                                            <div className="q-item animate-fade">
+                                                <p>Do you have a Gold Loan currently active?</p>
+                                                <div className="q-btns">
+                                                    <button onClick={() => handleAnswer('q1', 'Yes')}>YES, I DO</button>
+                                                    <button onClick={() => handleAnswer('q1', 'No')}>NO, I DON'T</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {currentQIndex === 1 && (
+                                            <div className="q-item animate-fade">
+                                                <p>Do you currently have an active Credit Card?</p>
+                                                <div className="q-btns">
+                                                    <button onClick={() => handleAnswer('q2', 'Yes')}>YES</button>
+                                                    <button onClick={() => handleAnswer('q2', 'No')}>NO</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {currentQIndex === 2 && (
+                                            <div className="q-item animate-fade">
+                                                <p>Does the applicant have the last 3 months' pay slips?</p>
+                                                <div className="q-btns">
+                                                    <button onClick={() => handleAnswer('q3', 'Yes')}>YES</button>
+                                                    <button onClick={() => handleAnswer('q3', 'No')}>NO</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {currentQIndex === 3 && (
+                                            <div className="q-item animate-fade">
+                                                <p>Does the applicant have a CIBIL score more than 700?</p>
+                                                <div className="q-btns">
+                                                    <button onClick={() => handleAnswer('q4', 'Yes')}>YES</button>
+                                                    <button onClick={() => handleAnswer('q4', 'No')}>NO</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {currentQIndex === 4 && (
+                                            <div className="q-item animate-fade">
+                                                <p>Is the monthly salary more than ₹25,000?</p>
+                                                <div className="q-btns">
+                                                    <button onClick={() => handleAnswer('q5', 'Yes')}>YES</button>
+                                                    <button onClick={() => handleAnswer('q5', 'No')}>NO</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {currentQIndex === 5 && (
+                                            <div className="q-item animate-fade">
+                                                <p>Does the applicant have PF/PT deductions in their company?</p>
+                                                <div className="q-btns">
+                                                    <button onClick={() => handleAnswer('q6', 'Yes')}>YES</button>
+                                                    <button onClick={() => handleAnswer('q6', 'No')}>NO</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {currentQIndex === 6 && (
+                                            <div className="q-item animate-fade">
+                                                <p>Does the applicant have a Residence Address Proof?</p>
+                                                <div className="q-btns">
+                                                    <button onClick={() => handleAnswer('q7', 'Yes')}>YES</button>
+                                                    <button onClick={() => handleAnswer('q7', 'No')}>NO</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {currentQIndex === 7 && (
+                                            <div className="q-item animate-fade">
+                                                <p>Does the applicant have any cheque bounces in the last 6 months?</p>
+                                                <div className="q-btns">
+                                                    <button onClick={() => handleAnswer('q8', 'Yes')}>YES</button>
+                                                    <button onClick={() => handleAnswer('q8', 'No')}>NO</button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </div>
 
@@ -568,11 +602,11 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                                 <div className="results-section">
                                     <h3 className="section-title">Eligibility Diagnostics</h3>
                                     <div className="diagnostics-grid">
-                                        {Object.keys(DIAGNOSTIC_LABELS).map(key => (
-                                            <div key={key} className="diagnostic-item">
-                                                <span>{DIAGNOSTIC_LABELS[key]}</span>
-                                                <span className={`status-tag ${answers[key] === 'Yes' || (key === 'q8' && answers[key] === 'No') ? 'pos' : 'neg'}`}>
-                                                    {answers[key] === 'Yes' ? 'YES' : 'NO'}
+                                        {(dbQuestions.length > 0 ? dbQuestions : Object.keys(DIAGNOSTIC_LABELS).map(k => ({ key: k, label: DIAGNOSTIC_LABELS[k] }))).map(q => (
+                                            <div key={q.key} className="diagnostic-item">
+                                                <span>{q.label}</span>
+                                                <span className={`status-tag ${answers[q.key] === 'Yes' || (q.key === 'q8' && answers[q.key] === 'No') ? 'pos' : 'neg'}`}>
+                                                    {answers[q.key] === 'Yes' ? 'YES' : 'NO'}
                                                 </span>
                                             </div>
                                         ))}

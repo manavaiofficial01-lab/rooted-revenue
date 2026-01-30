@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabase';
+import { syncDailyIncentives } from '../utils/incentiveSync';
 
 const Summary = () => {
     const [stats, setStats] = useState({
@@ -16,9 +17,20 @@ const Summary = () => {
     }, []);
 
     const fetchDashboardData = async () => {
-        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.name || 'Vicky';
+        const appUser = JSON.parse(localStorage.getItem('app_user'));
+        const currentUser = appUser?.username || 'Vicky';
+
         try {
             setLoading(true);
+            await syncDailyIncentives(currentUser);
+
+            // Fetch current user details for salary/target
+            const { data: userData } = await supabase
+                .from('users')
+                .select('salary, target')
+                .eq('username', currentUser)
+                .single();
+
             const { data, error } = await supabase
                 .from('client_logins')
                 .select('*')
@@ -41,12 +53,25 @@ const Summary = () => {
                     ? ((sCounts.disbursed / data.length) * 100).toFixed(1)
                     : 0;
 
+                // Incentive Logic: 0.5% for every dispersed amount above target
+                const target = userData?.target || 0;
+                const salary = userData?.salary || 0;
+                let incentive = 0;
+
+                if (totalRev > target && target > 0) {
+                    const excess = totalRev - target;
+                    incentive = excess * 0.005; // 0.5% commission
+                }
+
                 setStats({
                     totalRevenue: totalRev,
                     portfolioCount: data.length,
                     conversionRate: convRate,
                     statusCounts: sCounts,
-                    recentActivity: data.slice(0, 5)
+                    recentActivity: data.slice(0, 5),
+                    target: target,
+                    salary: salary,
+                    earnedIncentive: incentive
                 });
             }
         } catch (error) {
@@ -85,49 +110,57 @@ const Summary = () => {
                     <div className="stats-row">
                         <div className="metric-glass">
                             <div className="m-top">
-                                <span className="m-tag">Aggregated Revenue</span>
+                                <span className="m-tag">Total Disbursed</span>
                                 <div className="m-icon rev">
                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 1v22"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                                 </div>
                             </div>
                             <div className="m-body">
-                                <h3>₹{stats.totalRevenue.toLocaleString()}<span>.00</span></h3>
+                                <h3>₹{stats.totalRevenue.toLocaleString()}</h3>
                             </div>
                             <div className="m-footer">
-                                <span className="trend positive">Live</span>
-                                <span className="label">Total Disbursed Capital</span>
+                                <span className="trend positive">Target: ₹{(stats.target || 0).toLocaleString()}</span>
+                                <span className="label">Monthly Benchmark</span>
                             </div>
+                            {stats.target > 0 && (
+                                <div className="target-bar-wrap">
+                                    <div
+                                        className="target-bar-fill"
+                                        style={{ width: `${Math.min(100, (stats.totalRevenue / stats.target) * 100)}%` }}
+                                    ></div>
+                                </div>
+                            )}
                         </div>
 
-                        <div className="metric-glass">
+                        <div className="metric-glass premium-incentive">
                             <div className="m-top">
-                                <span className="m-tag">Active Portfolio</span>
-                                <div className="m-icon port">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                                <span className="m-tag">Earned Commission</span>
+                                <div className="m-icon inc">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                                 </div>
                             </div>
                             <div className="m-body">
-                                <h3>{stats.portfolioCount}</h3>
+                                <h3>₹{stats.earnedIncentive.toLocaleString()}</h3>
                             </div>
                             <div className="m-footer">
-                                <span className="trend positive">Total</span>
-                                <span className="label">Client Submissions</span>
+                                <span className="trend positive">0.5% Applied</span>
+                                <span className="label">Above Target Earnings</span>
                             </div>
                         </div>
 
-                        <div className="metric-glass">
+                        <div className="metric-glass total-payout">
                             <div className="m-top">
-                                <span className="m-tag">Conversion Index</span>
-                                <div className="m-icon conv">
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                                <span className="m-tag">Monthly Projection</span>
+                                <div className="m-icon total">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
                                 </div>
                             </div>
                             <div className="m-body">
-                                <h3>{stats.conversionRate}%</h3>
+                                <h3>₹{(parseFloat(stats.salary || 0) + stats.earnedIncentive).toLocaleString()}</h3>
                             </div>
                             <div className="m-footer">
-                                <span className="trend neutral">Optimal</span>
-                                <span className="label">Disbursement Success</span>
+                                <span className="trend neutral">Base: ₹{(stats.salary || 0).toLocaleString()}</span>
+                                <span className="label">Fixed + Performance</span>
                             </div>
                         </div>
                     </div>
@@ -214,12 +247,18 @@ const Summary = () => {
                 .m-tag { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); font-weight: 500; }
                 .m-icon { padding: 10px; border-radius: 12px; }
                 .m-icon.rev { color: #10b981; background: rgba(16, 185, 129, 0.05); }
-                .m-icon.port { color: #6366f1; background: rgba(99, 102, 241, 0.05); }
-                .m-icon.conv { color: #f59e0b; background: rgba(245, 158, 11, 0.05); }
+                .m-icon.inc { color: #f59e0b; background: rgba(245, 158, 11, 0.05); }
+                .m-icon.total { color: #6366f1; background: rgba(99, 102, 241, 0.05); }
                 
                 .m-body h3 { font-size: 2rem; font-weight: 200; letter-spacing: -0.04em; color: var(--text-main); }
                 .m-body h3 span { font-size: 1rem; opacity: 0.4; margin-left: 2px; }
+
+                .target-bar-wrap { height: 4px; background: rgba(255,255,255,0.03); border-radius: 10px; margin-top: 1rem; overflow: hidden; }
+                .target-bar-fill { height: 100%; background: var(--primary); border-radius: 10px; transition: 1.5s cubic-bezier(0.16, 1, 0.3, 1); }
                 
+                .metric-glass.premium-incentive { border-color: rgba(245, 158, 11, 0.2); }
+                .metric-glass.total-payout { border-color: rgba(99, 102, 241, 0.2); }
+
                 .m-footer { margin-top: 1.2rem; display: flex; align-items: center; gap: 10px; }
                 .trend { font-size: 0.65rem; padding: 3px 10px; border-radius: 100px; font-weight: 500; text-transform: uppercase; }
                 .trend.positive { background: rgba(16, 185, 129, 0.1); color: #10b981; }

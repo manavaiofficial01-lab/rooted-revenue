@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../supabase';
-import { BANK_LOGOS } from '../constants/banks';
+import { BANK_LOGOS, ALL_BANKS } from '../constants/banks';
 import ReportsExport from './ReportsExport';
+import IncentiveTracker from './IncentiveTracker';
+import { storage } from '../../firebase.config';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 const AdminDashboard = ({ onLogout }) => {
-    const QUESTION_MAP = {
+    const [questionMap, setQuestionMap] = useState({
         q1: "Gold Loan",
         q2: "Active CC",
         q3: "Pay Slips",
@@ -13,7 +16,7 @@ const AdminDashboard = ({ onLogout }) => {
         q6: "PF/PT Deduct",
         q7: "Address Proof",
         q8: "Cheque Bounce"
-    };
+    });
 
     const [activeTab, setActiveTab] = useState('employees');
     const [employees, setEmployees] = useState([]);
@@ -39,15 +42,44 @@ const AdminDashboard = ({ onLogout }) => {
     // Custom Dropdown States
     const [showAudienceDropdown, setShowAudienceDropdown] = useState(false);
     const [showPriorityDropdown, setShowPriorityDropdown] = useState(false);
+    const [showBankDropdown, setShowBankDropdown] = useState(false);
+    const [bankSearch, setBankSearch] = useState('');
 
-    const [userForm, setUserForm] = useState({ username: '', email: '', password: '', role: 'Agent', phone: '' });
+    const [userForm, setUserForm] = useState({ username: '', email: '', password: '', phone: '', salary: 0, target: 0 });
+    const [fullQuestions, setFullQuestions] = useState([]);
+    const [showQuestionModal, setShowQuestionModal] = useState(false);
+    const [editingQuestion, setEditingQuestion] = useState(null);
+    const [questionForm, setQuestionForm] = useState({
+        key: '',
+        question_text: '',
+        label: '',
+        sort_order: 1,
+        yes_eligible_banks: [],
+        no_eligible_banks: []
+    });
     const [searchQuery, setSearchQuery] = useState('');
     const [officeStats, setOfficeStats] = useState({ totalDisbursement: 0, totalLeads: 0, totalDisbursedCount: 0 });
     const [allLogins, setAllLogins] = useState([]);
 
+    // Company Repository States
+    const [companyFiles, setCompanyFiles] = useState([]);
+    const [showCompanyModal, setShowCompanyModal] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+    const [companyForm, setCompanyForm] = useState({
+        bank_name: '',
+        display_name: '',
+        description: '',
+        file_url: '',
+        file_path: '',
+        color_code: '#818cf8'
+    });
+
     useEffect(() => {
         fetchData();
         fetchSentNotifications();
+        fetchQuestionMap();
+        fetchFullQuestions();
+        fetchCompanyFiles();
 
         // Polling for data and engagement tracking every 5 minutes
         const pollInterval = setInterval(() => {
@@ -57,6 +89,35 @@ const AdminDashboard = ({ onLogout }) => {
 
         return () => clearInterval(pollInterval);
     }, []);
+
+    const fetchFullQuestions = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('personal_questions')
+                .select('*')
+                .order('sort_order', { ascending: true });
+            if (error) throw error;
+            setFullQuestions(data || []);
+        } catch (err) {
+            console.error('Failed to fetch full questions:', err);
+        }
+    };
+
+    const fetchQuestionMap = async () => {
+        try {
+            const { data, error } = await supabase.from('personal_questions').select('key, label');
+            if (error) throw error;
+            if (data) {
+                const map = {};
+                data.forEach(q => {
+                    map[q.key] = q.label;
+                });
+                setQuestionMap(prev => ({ ...prev, ...map }));
+            }
+        } catch (err) {
+            console.error('Failed to fetch question map:', err);
+        }
+    };
 
     const fetchSentNotifications = async () => {
         try {
@@ -69,6 +130,79 @@ const AdminDashboard = ({ onLogout }) => {
             setSentNotifications(data || []);
         } catch (err) {
             console.error('Failed to fetch notifications:', err);
+        }
+    };
+
+    const fetchCompanyFiles = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('company_files')
+                .select('*')
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            setCompanyFiles(data || []);
+        } catch (err) {
+            console.error('Failed to fetch company files:', err);
+        }
+    };
+
+    const handleSaveCompanyFile = async (e) => {
+        e.preventDefault();
+        const fileInput = document.getElementById('company-file-input');
+        const file = fileInput?.files[0];
+
+        if (!file && !companyForm.file_url) {
+            alert('Please select a file to upload.');
+            return;
+        }
+
+        try {
+            setIsUploading(true);
+            let fileUrl = companyForm.file_url;
+            let filePath = companyForm.file_path;
+
+            if (file) {
+                // Upload to Firebase
+                const storagePath = `company_lists/${Date.now()}_${file.name}`;
+                const storageRef = ref(storage, storagePath);
+                await uploadBytes(storageRef, file);
+                fileUrl = await getDownloadURL(storageRef);
+                filePath = storagePath;
+            }
+
+            const payload = {
+                ...companyForm,
+                file_url: fileUrl,
+                file_path: filePath
+            };
+
+            const { error } = await supabase.from('company_files').insert([payload]);
+            if (error) throw error;
+
+            setShowCompanyModal(false);
+            setCompanyForm({ bank_name: '', display_name: '', description: '', file_url: '', file_path: '', color_code: '#818cf8' });
+            fetchCompanyFiles();
+        } catch (error) {
+            alert(error.message);
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const handleDeleteCompanyFile = async (item) => {
+        if (!confirm(`Are you sure you want to delete "${item.display_name}"?`)) return;
+        try {
+            // Delete from Firebase
+            const storageRef = ref(storage, item.file_path);
+            await deleteObject(storageRef).catch(err => console.warn('Firebase file delete failed:', err));
+
+            // Delete from Supabase
+            const { error } = await supabase.from('company_files').delete().eq('id', item.id);
+            if (error) throw error;
+
+            fetchCompanyFiles();
+        } catch (error) {
+            alert(error.message);
         }
     };
 
@@ -161,16 +295,25 @@ const AdminDashboard = ({ onLogout }) => {
     const handleSaveUser = async (e) => {
         e.preventDefault();
         try {
+            // Clean payload to only include DB-compliant fields
+            const { username, email, password, phone, salary, target } = userForm;
+            const payload = { username, email, password, phone, salary, target };
+            console.log('Final Payload being sent to Supabase:', payload);
+
             if (editingUser) {
-                await supabase.from('users').update(userForm).eq('id', editingUser.id);
+                const { error } = await supabase.from('users').update(payload).eq('id', editingUser.id);
+                if (error) throw error;
             } else {
-                await supabase.from('users').insert([userForm]);
+                const { error } = await supabase.from('users').insert([payload]);
+                if (error) throw error;
             }
+
             setShowUserModal(false);
             setEditingUser(null);
+            setUserForm({ username: '', email: '', password: '', phone: '', salary: 0, target: 0 });
             fetchData();
         } catch (error) {
-            alert(error.message);
+            alert('Creation Failed: ' + error.message);
         }
     };
 
@@ -220,8 +363,69 @@ const AdminDashboard = ({ onLogout }) => {
         }
     };
 
+    const handleAddQuestion = () => {
+        setEditingQuestion(null);
+        setQuestionForm({
+            key: '',
+            question_text: '',
+            label: '',
+            sort_order: fullQuestions.length + 1,
+            yes_eligible_banks: [],
+            no_eligible_banks: []
+        });
+        setShowQuestionModal(true);
+    };
+
+    const handleEditQuestion = (question) => {
+        setEditingQuestion(question);
+        setQuestionForm({
+            key: question.key,
+            question_text: question.question_text,
+            label: question.label,
+            sort_order: question.sort_order,
+            yes_eligible_banks: question.yes_eligible_banks || [],
+            no_eligible_banks: question.no_eligible_banks || []
+        });
+        setShowQuestionModal(true);
+    };
+
+    const handleSaveQuestion = async (e) => {
+        e.preventDefault();
+        try {
+            if (editingQuestion) {
+                await supabase.from('personal_questions').update(questionForm).eq('id', editingQuestion.id);
+            } else {
+                await supabase.from('personal_questions').insert([questionForm]);
+            }
+            setShowQuestionModal(false);
+            setEditingQuestion(null);
+            fetchFullQuestions();
+            fetchQuestionMap(); // Refresh the map as well
+        } catch (error) {
+            alert(error.message);
+        }
+    };
+
+    const handleDeleteQuestion = async (id) => {
+        if (!confirm('Are you sure you want to delete this question? This action cannot be undone.')) return;
+        try {
+            const { error } = await supabase.from('personal_questions').delete().eq('id', id);
+            if (error) throw error;
+            fetchFullQuestions();
+            fetchQuestionMap();
+        } catch (error) {
+            alert(error.message);
+        }
+    };
+
     const filteredPolicies = policies.filter(p =>
         p.bank_name?.toLowerCase().includes(policySearchQuery.toLowerCase())
+    );
+
+    const filteredQuestions = fullQuestions.filter(q =>
+        q.label?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        q.question_text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        q.key?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     const getStatsByPeriod = (logins) => {
@@ -285,6 +489,14 @@ const AdminDashboard = ({ onLogout }) => {
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M12 8v4" /><path d="M12 16h.01" /></svg>
                             Lending Master
                         </button>
+                        <button className={activeTab === 'questions' ? 'active' : ''} onClick={() => { setActiveTab('questions'); setSelectedEmployee(null); }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                            Loan Config
+                        </button>
+                        <button className={activeTab === 'company_repos' ? 'active' : ''} onClick={() => { setActiveTab('company_repos'); setSelectedEmployee(null); }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 21h18"></path><path d="M9 8h1"></path><path d="M9 12h1"></path><path d="M9 16h1"></path><path d="M14 8h1"></path><path d="M14 12h1"></path><path d="M14 16h1"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+                            Company Repos
+                        </button>
                     </div>
 
                     <div className="nav-group">
@@ -297,6 +509,10 @@ const AdminDashboard = ({ onLogout }) => {
 
                     <div className="nav-group">
                         <label>Analytics</label>
+                        <button className={activeTab === 'analytics' ? 'active' : ''} onClick={() => { setActiveTab('analytics'); setSelectedEmployee(null); }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>
+                            Incentive Portfolio
+                        </button>
                         <button className={activeTab === 'reports' ? 'active' : ''} onClick={() => { setActiveTab('reports'); setSelectedEmployee(null); }}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                             Reports & Export
@@ -330,6 +546,60 @@ const AdminDashboard = ({ onLogout }) => {
             </header>
 
             <main className="admin-viewport">
+                {activeTab === 'company_repos' && (
+                    <div className="admin-view animate-fade">
+                        <header className="view-head">
+                            <div className="head-text">
+                                <h1>Company Repositories</h1>
+                                <p>Manage bank empanelment lists and corporate categorization databases.</p>
+                            </div>
+                            <div className="head-actions">
+                                <button className="add-btn secondary" onClick={() => {
+                                    setCompanyForm({ bank_name: '', display_name: '', description: '', file_url: '', file_path: '', color_code: '#818cf8' });
+                                    setShowCompanyModal(true);
+                                }}>
+                                    + Upload New List
+                                </button>
+                            </div>
+                        </header>
+
+                        <div className="company-repos-grid">
+                            {companyFiles.length === 0 ? (
+                                <div className="empty-state-full">
+                                    <div className="empty-icon">
+                                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1"><path d="M3 21h18"></path><path d="M9 8h1"></path><path d="M9 12h1"></path><path d="M9 16h1"></path><path d="M14 8h1"></path><path d="M14 12h1"></path><path d="M14 16h1"></path><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"></path></svg>
+                                    </div>
+                                    <h3>No Repositories Identified</h3>
+                                    <p>Upload bank-specific Excel files to enable corporate verification for agents.</p>
+                                </div>
+                            ) : (
+                                <div className="repo-admin-grid">
+                                    {companyFiles.map(file => (
+                                        <div key={file.id} className="repo-admin-card" style={{ '--accent': file.color_code }}>
+                                            <div className="repo-top">
+                                                <div className="repo-icon" style={{ background: `${file.color_code}20`, color: file.color_code }}>
+                                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                                                </div>
+                                                <div className="repo-info">
+                                                    <h3>{file.display_name}</h3>
+                                                    <span className="bank-tag">{file.bank_name}</span>
+                                                </div>
+                                                <button className="repo-delete-btn" onClick={() => handleDeleteCompanyFile(file)}>
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                                </button>
+                                            </div>
+                                            <p className="repo-desc">{file.description}</p>
+                                            <div className="repo-footer">
+                                                <span className="repo-date">Uploaded {new Date(file.created_at).toLocaleDateString()}</span>
+                                                <a href={file.file_url} target="_blank" rel="noreferrer" className="download-link">Verify File</a>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
                 {activeTab === 'employees' && !selectedEmployee && (
                     <div className="admin-view">
                         <header className="view-head">
@@ -347,7 +617,7 @@ const AdminDashboard = ({ onLogout }) => {
                                         onChange={(e) => setSearchQuery(e.target.value)}
                                     />
                                 </div>
-                                <button className="add-btn" onClick={() => { setEditingUser(null); setUserForm({ username: '', email: '', password: '', role: 'Agent', phone: '' }); setShowUserModal(true); }}>
+                                <button className="add-btn" onClick={() => { setEditingUser(null); setUserForm({ username: '', email: '', password: '', phone: '', salary: 0, target: 0 }); setShowUserModal(true); }}>
                                     + Onboard Agent
                                 </button>
                             </div>
@@ -383,12 +653,8 @@ const AdminDashboard = ({ onLogout }) => {
                             {filteredEmployees.map(emp => (
                                 <div key={emp.id} className="employee-card interactive" onClick={() => handleEmployeeClick(emp)}>
                                     <div className="emp-top">
-                                        <div className="emp-avatar">
-                                            {emp.profile_pic ? (
-                                                <img src={emp.profile_pic} alt={emp.username} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '14px' }} />
-                                            ) : (
-                                                emp.username.charAt(0)
-                                            )}
+                                        <div className="emp-avatar-minimal">
+                                            {emp.username.charAt(0)}
                                             <div className="online-dot"></div>
                                         </div>
                                         <div className="emp-info">
@@ -419,13 +685,36 @@ const AdminDashboard = ({ onLogout }) => {
                                                 <div className="funnel-bar"><div className="fill" style={{ width: '100%' }}></div><span>{emp.stats.leads}</span></div>
                                             </div>
                                             <div className="funnel-item">
-                                                <span>Follow-ups</span>
-                                                <div className="funnel-bar"><div className="fill blue" style={{ width: `${(emp.stats.follow_up / (emp.stats.leads || 1)) * 100}%` }}></div><span>{emp.stats.follow_up}</span></div>
-                                            </div>
-                                            <div className="funnel-item">
                                                 <span>Disbursed</span>
                                                 <div className="funnel-bar"><div className="fill green" style={{ width: `${(emp.stats.disbursed / (emp.stats.leads || 1)) * 100}%` }}></div><span>{emp.stats.disbursed}</span></div>
                                             </div>
+                                        </div>
+
+                                        <div className="emp-incentive-preview" style={{ marginTop: '1.2rem', padding: '1rem', background: 'rgba(255,255,255,0.02)', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Target Progress</span>
+                                                <span style={{ fontSize: '0.75rem', color: emp.stats.disbursement >= (emp.target || 0) ? '#10b981' : 'var(--text-main)' }}>
+                                                    {emp.target > 0 ? Math.round((emp.stats.disbursement / emp.target) * 100) : 0}%
+                                                </span>
+                                            </div>
+                                            <div className="p-bar-wrap" style={{ height: '5px', background: 'rgba(255,255,255,0.05)', borderRadius: '10px', overflow: 'hidden' }}>
+                                                <div
+                                                    style={{
+                                                        height: '100%',
+                                                        background: emp.stats.disbursement >= (emp.target || 0) ? '#10b981' : 'var(--primary)',
+                                                        width: `${Math.min(100, emp.target > 0 ? (emp.stats.disbursement / emp.target) * 100 : 0)}%`,
+                                                        transition: '1s'
+                                                    }}
+                                                ></div>
+                                            </div>
+                                            {emp.stats.disbursement > (emp.target || 0) && emp.target > 0 && (
+                                                <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <span style={{ fontSize: '0.7rem', color: '#10b981' }}>Est. Incentive</span>
+                                                    <span style={{ fontSize: '0.9rem', color: '#10b981', fontWeight: '500' }}>
+                                                        ₹{((emp.stats.disbursement - emp.target) * 0.005).toLocaleString()}
+                                                    </span>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -557,7 +846,7 @@ const AdminDashboard = ({ onLogout }) => {
                                                         <div key={key} className="qa-pill-detailed">
                                                             <div className="qa-label-wrap">
                                                                 <span className="q-id">{key.toUpperCase()}</span>
-                                                                <span className="q-text">{QUESTION_MAP[key] || key}</span>
+                                                                <span className="q-text">{questionMap[key] || key}</span>
                                                             </div>
                                                             <span className={`a-val ${val === 'Yes' ? 'pass' : 'fail'}`}>{val}</span>
                                                         </div>
@@ -594,6 +883,69 @@ const AdminDashboard = ({ onLogout }) => {
                                     </div>
                                 )}
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'questions' && (
+                    <div className="admin-view animate-fade">
+                        <header className="view-head">
+                            <div className="head-text">
+                                <h1>Loan Configuration</h1>
+                                <p>Manage and define the eligibility questions and their bank mappings.</p>
+                            </div>
+                            <div className="head-actions">
+                                <div className="search-box">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                                    <input
+                                        type="text"
+                                        placeholder="Search questions..."
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                    />
+                                </div>
+                                <button className="add-btn secondary" onClick={handleAddQuestion}>
+                                    + Add New Question
+                                </button>
+                            </div>
+                        </header>
+
+                        <div className="question-list">
+                            {filteredQuestions.map(q => (
+                                <div key={q.id} className="question-admin-card">
+                                    <div className="q-card-main">
+                                        <div className="q-info">
+                                            <span className="q-badge">{q.key}</span>
+                                            <h3>{q.question_text}</h3>
+                                            <p className="q-label-sub">Label: {q.label} | Order: {q.sort_order}</p>
+                                        </div>
+                                        <div className="q-actions">
+                                            <button className="q-edit-btn" onClick={() => handleEditQuestion(q)}>
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                                                Edit
+                                            </button>
+                                            <button className="q-delete-btn" onClick={() => handleDeleteQuestion(q.id)}>
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                                Delete
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="q-eligibility-summary">
+                                        <div className="e-summary-item">
+                                            <label>Eligible (Yes)</label>
+                                            <div className="e-tags">
+                                                {q.yes_eligible_banks?.length > 0 ? q.yes_eligible_banks.map(bank => <span key={bank} className="e-tag yes">{bank}</span>) : <span className="none">None</span>}
+                                            </div>
+                                        </div>
+                                        <div className="e-summary-item">
+                                            <label>Ineligible (No)</label>
+                                            <div className="e-tags">
+                                                {q.no_eligible_banks?.length > 0 ? q.no_eligible_banks.map(bank => <span key={bank} className="e-tag no">{bank}</span>) : <span className="none">None</span>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 )}
@@ -656,11 +1008,11 @@ const AdminDashboard = ({ onLogout }) => {
                 )}
 
                 {activeTab === 'clients' && (
-                    <div className="admin-view">
+                    <div className="admin-view animate-fade">
                         <header className="view-head">
                             <div className="head-text">
                                 <h1>Client Database</h1>
-                                <p>Central registry of all authenticated applications and lead lifecycles.</p>
+                                <p>Comprehensive registry of all initiated loan applications and their current status.</p>
                             </div>
                             <div className="head-actions">
                                 <div className="search-box">
@@ -729,167 +1081,169 @@ const AdminDashboard = ({ onLogout }) => {
                             </div>
                         </div>
                     </div>
-                )}
+                )
+                }
 
-                {activeTab === 'notifications' && (
-                    <div className="admin-view">
-                        <header className="view-head">
-                            <div className="head-text">
-                                <h1>Communication Hub</h1>
-                                <p>Orchestrate office-wide broadcasts and track engagement in real-time.</p>
-                            </div>
-                        </header>
-
-                        <div className="notifications-layout">
-                            {/* Composer Side */}
-                            <div className="composer-container glass-card">
-                                <div className="composer-head">
-                                    <div className="c-icon-bg">
-                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.5 1.5" /><path d="M7 11l5-5" /></svg>
-                                    </div>
-                                    <div className="c-title">
-                                        <h3>New Broadcast</h3>
-                                        <p>Reach your team instantly</p>
-                                    </div>
+                {
+                    activeTab === 'notifications' && (
+                        <div className="admin-view">
+                            <header className="view-head">
+                                <div className="head-text">
+                                    <h1>Communication Hub</h1>
+                                    <p>Orchestrate office-wide broadcasts and track engagement in real-time.</p>
                                 </div>
+                            </header>
 
-                                <form className="broadcast-form-premium" onSubmit={async (e) => {
-                                    e.preventDefault();
-                                    setSendingNotification(true);
-                                    try {
-                                        const { data, error } = await supabase.from('notifications').insert([{
-                                            message: notificationForm.message,
-                                            target_username: notificationForm.target === 'all' ? null : notificationForm.target,
-                                            is_global: notificationForm.target === 'all',
-                                            type: notificationForm.type,
-                                            created_by: 'Admin'
-                                        }]).select();
-
-                                        if (error) throw error;
-                                        setNotificationForm({ ...notificationForm, message: '' });
-                                        fetchSentNotifications();
-                                    } catch (err) {
-                                        alert(err.message);
-                                    } finally {
-                                        setSendingNotification(false);
-                                    }
-                                }}>
-                                    <div className="form-row-n">
-                                        <div className="input-group-n">
-                                            <label>Audience Target</label>
-                                            <div className="custom-dropdown-wrap">
-                                                <div className={`custom-select-trigger ${showAudienceDropdown ? 'active' : ''}`} onClick={() => { setShowAudienceDropdown(!showAudienceDropdown); setShowPriorityDropdown(false); }}>
-                                                    <span>{notificationForm.target === 'all' ? 'Global (All Office)' : notificationForm.target}</span>
-                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
-                                                </div>
-                                                {showAudienceDropdown && (
-                                                    <div className="custom-options-panel animate-pop">
-                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, target: 'all' }); setShowAudienceDropdown(false); }}>Global (All Office)</div>
-                                                        {employees.map(emp => (
-                                                            <div key={emp.id} className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, target: emp.username }); setShowAudienceDropdown(false); }}>{emp.username}</div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
+                            <div className="notifications-layout">
+                                {/* Composer Side */}
+                                <div className="composer-container glass-card">
+                                    <div className="composer-head">
+                                        <div className="c-icon-bg">
+                                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.5 1.5" /><path d="M7 11l5-5" /></svg>
                                         </div>
-                                        <div className="input-group-n">
-                                            <label>Priority Level</label>
-                                            <div className="custom-dropdown-wrap">
-                                                <div className={`custom-select-trigger ${showPriorityDropdown ? 'active' : ''}`} onClick={() => { setShowPriorityDropdown(!showPriorityDropdown); setShowAudienceDropdown(false); }}>
-                                                    <span className={`p-indicator ${notificationForm.type}`}></span>
-                                                    <span>{notificationForm.type.charAt(0).toUpperCase() + notificationForm.type.slice(1)}</span>
-                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
-                                                </div>
-                                                {showPriorityDropdown && (
-                                                    <div className="custom-options-panel animate-pop">
-                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'info' }); setShowPriorityDropdown(false); }}><span className="p-indicator info"></span> Information</div>
-                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'success' }); setShowPriorityDropdown(false); }}><span className="p-indicator success"></span> Success Event</div>
-                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'warning' }); setShowPriorityDropdown(false); }}><span className="p-indicator warning"></span> System Alert</div>
-                                                        <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'error' }); setShowPriorityDropdown(false); }}><span className="p-indicator error"></span> Emergency</div>
-                                                    </div>
-                                                )}
-                                            </div>
+                                        <div className="c-title">
+                                            <h3>New Broadcast</h3>
+                                            <p>Reach your team instantly</p>
                                         </div>
                                     </div>
-                                    <div className="input-group-n full" style={{ marginTop: '0.5rem' }}>
-                                        <label>Broadcast Message</label>
-                                        <textarea
-                                            rows="5"
-                                            placeholder="Write something professional or urgent..."
-                                            value={notificationForm.message}
-                                            onChange={(e) => setNotificationForm({ ...notificationForm, message: e.target.value })}
-                                            required
-                                        ></textarea>
-                                    </div>
-                                    <div className="dispatch-action-area">
-                                        <button className="premium-dispatch-btn" disabled={sendingNotification}>
-                                            <span>{sendingNotification ? 'Processing...' : 'Dispatch Announcement'}</span>
-                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                                        </button>
-                                    </div>
-                                </form>
-                            </div>
 
-                            {/* Tracking Side */}
-                            <div className="tracking-container glass-card">
-                                <div className="tracking-head">
-                                    <h3>Engagement Tracker</h3>
-                                    <button className="refresh-mini" onClick={fetchSentNotifications} title="Refresh Live Status">
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
-                                    </button>
-                                </div>
+                                    <form className="broadcast-form-premium" onSubmit={async (e) => {
+                                        e.preventDefault();
+                                        setSendingNotification(true);
+                                        try {
+                                            const { data, error } = await supabase.from('notifications').insert([{
+                                                message: notificationForm.message,
+                                                target_username: notificationForm.target === 'all' ? null : notificationForm.target,
+                                                is_global: notificationForm.target === 'all',
+                                                type: notificationForm.type,
+                                                created_by: 'Admin'
+                                            }]).select();
 
-                                <div className="sent-notif-list">
-                                    {sentNotifications.length === 0 ? (
-                                        <div className="empty-tracking">
-                                            <p>No messages dispatched in the last 24h.</p>
-                                        </div>
-                                    ) : (
-                                        sentNotifications.map(sn => {
-                                            const readCount = sn.notification_reads?.length || 0;
-                                            const totalTarget = sn.is_global ? employees.length : 1;
-                                            return (
-                                                <div key={sn.id} className={`sent-notif-card ${sn.type}`}>
-                                                    <div className="sn-top">
-                                                        <span className="sn-type">{sn.is_global ? 'OFFICE BROADCAST' : `TARGET: ${sn.target_username}`}</span>
-                                                        <div className="sn-top-actions">
-                                                            {!sn.is_global && (
-                                                                <div className={`status-tag-mini ${sn.status}`}>
-                                                                    {sn.status === 'sent' && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
-                                                                    {sn.status === 'received' && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /></svg>}
-                                                                    {sn.status === 'seen' && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>}
-                                                                    <span>{sn.status}</span>
-                                                                </div>
-                                                            )}
-                                                            <div className="read-status-badge">
-                                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
-                                                                <span>{readCount}/{totalTarget} Seen</span>
-                                                            </div>
-                                                            <button className="del-btn-mini" onClick={() => handleDeleteNotification(sn.id)}>
-                                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                                                            </button>
-                                                        </div>
+                                            if (error) throw error;
+                                            setNotificationForm({ ...notificationForm, message: '' });
+                                            fetchSentNotifications();
+                                        } catch (err) {
+                                            alert(err.message);
+                                        } finally {
+                                            setSendingNotification(false);
+                                        }
+                                    }}>
+                                        <div className="form-row-n">
+                                            <div className="input-group-n">
+                                                <label>Audience Target</label>
+                                                <div className="custom-dropdown-wrap">
+                                                    <div className={`custom-select-trigger ${showAudienceDropdown ? 'active' : ''}`} onClick={() => { setShowAudienceDropdown(!showAudienceDropdown); setShowPriorityDropdown(false); }}>
+                                                        <span>{notificationForm.target === 'all' ? 'Global (All Office)' : notificationForm.target}</span>
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
                                                     </div>
-                                                    <p className="sn-msg">{sn.message}</p>
-                                                    <div className="sn-details">
-                                                        <span className="sn-time">{new Date(sn.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                                        <div className="viewer-dots">
-                                                            {sn.notification_reads?.map(r => (
-                                                                <div key={r.id} className="v-dot" title={`${r.username} viewed at ${new Date(r.read_at).toLocaleTimeString()}`}>
-                                                                    {r.username.charAt(0).toUpperCase()}
-                                                                </div>
+                                                    {showAudienceDropdown && (
+                                                        <div className="custom-options-panel animate-pop">
+                                                            <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, target: 'all' }); setShowAudienceDropdown(false); }}>Global (All Office)</div>
+                                                            {employees.map(emp => (
+                                                                <div key={emp.id} className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, target: emp.username }); setShowAudienceDropdown(false); }}>{emp.username}</div>
                                                             ))}
                                                         </div>
-                                                    </div>
+                                                    )}
                                                 </div>
-                                            );
-                                        })
-                                    )}
+                                            </div>
+                                            <div className="input-group-n">
+                                                <label>Priority Level</label>
+                                                <div className="custom-dropdown-wrap">
+                                                    <div className={`custom-select-trigger ${showPriorityDropdown ? 'active' : ''}`} onClick={() => { setShowPriorityDropdown(!showPriorityDropdown); setShowAudienceDropdown(false); }}>
+                                                        <span className={`p-indicator ${notificationForm.type}`}></span>
+                                                        <span>{notificationForm.type.charAt(0).toUpperCase() + notificationForm.type.slice(1)}</span>
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
+                                                    </div>
+                                                    {showPriorityDropdown && (
+                                                        <div className="custom-options-panel animate-pop">
+                                                            <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'info' }); setShowPriorityDropdown(false); }}><span className="p-indicator info"></span> Information</div>
+                                                            <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'success' }); setShowPriorityDropdown(false); }}><span className="p-indicator success"></span> Success Event</div>
+                                                            <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'warning' }); setShowPriorityDropdown(false); }}><span className="p-indicator warning"></span> System Alert</div>
+                                                            <div className="option-item" onClick={() => { setNotificationForm({ ...notificationForm, type: 'error' }); setShowPriorityDropdown(false); }}><span className="p-indicator error"></span> Emergency</div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="input-group-n full" style={{ marginTop: '0.5rem' }}>
+                                            <label>Broadcast Message</label>
+                                            <textarea
+                                                rows="5"
+                                                placeholder="Write something professional or urgent..."
+                                                value={notificationForm.message}
+                                                onChange={(e) => setNotificationForm({ ...notificationForm, message: e.target.value })}
+                                                required
+                                            ></textarea>
+                                        </div>
+                                        <div className="dispatch-action-area">
+                                            <button className="premium-dispatch-btn" disabled={sendingNotification}>
+                                                <span>{sendingNotification ? 'Processing...' : 'Dispatch Announcement'}</span>
+                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+
+                                {/* Tracking Side */}
+                                <div className="tracking-container glass-card">
+                                    <div className="tracking-head">
+                                        <h3>Engagement Tracker</h3>
+                                        <button className="refresh-mini" onClick={fetchSentNotifications} title="Refresh Live Status">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>
+                                        </button>
+                                    </div>
+
+                                    <div className="sent-notif-list">
+                                        {sentNotifications.length === 0 ? (
+                                            <div className="empty-tracking">
+                                                <p>No messages dispatched in the last 24h.</p>
+                                            </div>
+                                        ) : (
+                                            sentNotifications.map(sn => {
+                                                const readCount = sn.notification_reads?.length || 0;
+                                                const totalTarget = sn.is_global ? employees.length : 1;
+                                                return (
+                                                    <div key={sn.id} className={`sent-notif-card ${sn.type}`}>
+                                                        <div className="sn-top">
+                                                            <span className="sn-type">{sn.is_global ? 'OFFICE BROADCAST' : `TARGET: ${sn.target_username}`}</span>
+                                                            <div className="sn-top-actions">
+                                                                {!sn.is_global && (
+                                                                    <div className={`status-tag-mini ${sn.status}`}>
+                                                                        {sn.status === 'sent' && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
+                                                                        {sn.status === 'received' && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /></svg>}
+                                                                        {sn.status === 'seen' && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>}
+                                                                        <span>{sn.status}</span>
+                                                                    </div>
+                                                                )}
+                                                                <div className="read-status-badge">
+                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                                                                    <span>{readCount}/{totalTarget} Seen</span>
+                                                                </div>
+                                                                <button className="del-btn-mini" onClick={() => handleDeleteNotification(sn.id)}>
+                                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        <p className="sn-msg">{sn.message}</p>
+                                                        <div className="sn-details">
+                                                            <span className="sn-time">{new Date(sn.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                                            <div className="viewer-dots">
+                                                                {sn.notification_reads?.map(r => (
+                                                                    <div key={r.id} className="v-dot" title={`${r.username} viewed at ${new Date(r.read_at).toLocaleTimeString()}`}>
+                                                                        {r.username.charAt(0).toUpperCase()}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        <style>{`
+                            <style>{`
                             .notifications-layout { display: grid; grid-template-columns: 1fr 400px; gap: 2rem; margin-top: 1rem; }
                             
                             .glass-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 24px; box-shadow: var(--shadow); color: var(--text); }
@@ -918,14 +1272,50 @@ const AdminDashboard = ({ onLogout }) => {
 
                             .custom-options-panel { 
                                 position: absolute; top: calc(100% + 8px); left: 0; right: 0; background: var(--bg-side); 
-                                border: 1px solid var(--border-light); border-radius: 16px; z-index: 100; overflow: hidden;
+                                border: 1px solid var(--border-light); border-radius: 16px; z-index: 100; overflow: auto;
                                 box-shadow: 0 20px 50px rgba(0,0,0,0.4); backdrop-filter: blur(20px);
+                                max-height: 300px; scrollbar-width: thin;
                             }
                             .option-item { 
                                 padding: 0.8rem 1.2rem; cursor: pointer; transition: 0.2s; font-size: 0.9rem; color: var(--text-muted);
-                                display: flex; align-items: center; gap: 10px;
+                                display: flex; align-items: center; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.02);
                             }
-                            .option-item:hover { background: var(--input-bg); color: var(--text); padding-left: 1.5rem; }
+                            .option-item:last-child { border-bottom: none; }
+                            .option-item:hover { background: rgba(255,255,255,0.05); color: var(--text); padding-left: 1.4rem; }
+                            
+                             .option-logo-wrap {
+                                 width: 24px !important; 
+                                 height: 24px !important; 
+                                 min-width: 24px !important;
+                                 min-height: 24px !important;
+                                 border-radius: 6px; 
+                                 background: white;
+                                 overflow: hidden; 
+                                 display: flex !important; 
+                                 align-items: center; 
+                                 justify-content: center;
+                                 flex-shrink: 0; 
+                                 padding: 2px;
+                                 border: 1px solid rgba(0,0,0,0.05);
+                             }
+                             .option-logo-wrap img { 
+                                 width: 100% !important; 
+                                 height: 100% !important; 
+                                 max-width: 100% !important;
+                                 max-height: 100% !important;
+                                 object-fit: contain !important; 
+                             }
+                            
+                            .dropdown-search-wrap {
+                                padding: 12px; border-bottom: 1px solid var(--border);
+                                position: sticky; top: 0; background: var(--bg-side); z-index: 10;
+                            }
+                            .dropdown-search-input {
+                                width: 100%; padding: 0.7rem 1rem; background: rgba(255,255,255,0.03);
+                                border: 1px solid var(--border); border-radius: 10px; color: var(--text);
+                                font-size: 0.85rem; outline: none; transition: 0.3s;
+                            }
+                            .dropdown-search-input:focus { border-color: var(--primary); background: rgba(255,255,255,0.06); }
                             
                             .p-indicator { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
                             .p-indicator.info { background: var(--primary); box-shadow: 0 0 10px var(--primary); }
@@ -993,11 +1383,17 @@ const AdminDashboard = ({ onLogout }) => {
                                 .tracking-container { max-height: none; }
                             }
                         `}</style>
-                    </div>
-                )}
+                        </div>
+                    )
+                }
 
                 {activeTab === 'reports' && <ReportsExport allLogins={allLogins} />}
-            </main>
+                {activeTab === 'analytics' && (
+                    <div className="admin-view animate-fade">
+                        <IncentiveTracker />
+                    </div>
+                )}
+            </main >
 
             {showUserModal && (
                 <div className="admin-modal-overlay">
@@ -1014,7 +1410,25 @@ const AdminDashboard = ({ onLogout }) => {
                             </div>
                             <div className="modal-input">
                                 <label>Phone (Optional)</label>
-                                <input value={userForm.phone} onChange={(e) => setUserForm({ ...userForm, phone: e.target.value })} />
+                                <div className="input-prefix-wrap">
+                                    <span className="prefix">+91</span>
+                                    <input
+                                        type="tel"
+                                        placeholder="Enter 10-digit mobile"
+                                        value={userForm.phone}
+                                        onChange={(e) => setUserForm({ ...userForm, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div className="modal-input">
+                                    <label>Fixed Salary (Monthly)</label>
+                                    <input type="number" value={userForm.salary} onChange={(e) => setUserForm({ ...userForm, salary: parseFloat(e.target.value) || 0 })} placeholder="₹25000" />
+                                </div>
+                                <div className="modal-input">
+                                    <label>Disbursement Target</label>
+                                    <input type="number" value={userForm.target} onChange={(e) => setUserForm({ ...userForm, target: parseInt(e.target.value) || 0 })} placeholder="₹5000000" />
+                                </div>
                             </div>
                             <div className="modal-input">
                                 <label>Credential (Password)</label>
@@ -1047,180 +1461,389 @@ const AdminDashboard = ({ onLogout }) => {
                 </div>
             )}
 
-            {showPolicyModal && selectedPolicy && (
-                <div className="admin-modal-overlay">
-                    <div className="admin-modal policy-modal animate-pop">
-                        <div className="modal-header">
-                            <div className="modal-title-wrap">
-                                <div className="bank-avatar">
-                                    {BANK_LOGOS[selectedPolicy.bank_name] ? <img src={BANK_LOGOS[selectedPolicy.bank_name]} alt={selectedPolicy.bank_name} /> : selectedPolicy.bank_name?.charAt(0)}
+            {
+                showPolicyModal && selectedPolicy && (
+                    <div className="admin-modal-overlay">
+                        <div className="admin-modal policy-modal animate-pop">
+                            <div className="modal-header">
+                                <div className="modal-title-wrap">
+                                    <div className="bank-avatar">
+                                        {BANK_LOGOS[selectedPolicy.bank_name] ? <img src={BANK_LOGOS[selectedPolicy.bank_name]} alt={selectedPolicy.bank_name} /> : selectedPolicy.bank_name?.charAt(0)}
+                                    </div>
+                                    <div>
+                                        <h2>{selectedPolicy.bank_name}</h2>
+                                        <p>Configure Partner Protocol</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h2>{selectedPolicy.bank_name}</h2>
-                                    <p>Configure Partner Protocol</p>
-                                </div>
+                                <button className="close-modal" onClick={() => setShowPolicyModal(false)}>×</button>
                             </div>
-                            <button className="close-modal" onClick={() => setShowPolicyModal(false)}>×</button>
+
+                            <form onSubmit={handleSavePolicy} className="policy-form">
+                                <div className="form-scrollable">
+                                    <div className="form-section">
+                                        <label className="section-label">Financial Thresholds</label>
+                                        <div className="form-grid">
+                                            <div className="modal-input">
+                                                <label>Partner Name</label>
+                                                <input value={selectedPolicy.bank_name || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, bank_name: e.target.value })} required />
+                                            </div>
+                                            <div className="modal-input">
+                                                <label>Min Income</label>
+                                                <input value={selectedPolicy.income || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, income: e.target.value })} />
+                                            </div>
+                                            <div className="modal-input">
+                                                <label>IRR (Interest)</label>
+                                                <input value={selectedPolicy.irr || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, irr: e.target.value })} />
+                                            </div>
+                                            <div className="modal-input">
+                                                <label>Max Tenor (Mon)</label>
+                                                <input type="number" value={selectedPolicy.tenor || 0} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, tenor: e.target.value })} />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-section">
+                                        <label className="section-label">Lending Rules & Compliance</label>
+                                        <div className="form-grid">
+                                            <div className="modal-input">
+                                                <label>CIBIL Minimum</label>
+                                                <input value={selectedPolicy.cibil || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, cibil: e.target.value })} />
+                                            </div>
+                                            <div className="modal-input">
+                                                <label>BT Status</label>
+                                                <input value={selectedPolicy.bt || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, bt: e.target.value })} />
+                                            </div>
+                                            <div className="modal-input">
+                                                <label>PF/PT Status</label>
+                                                <input value={selectedPolicy.pf_pt || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, pf_pt: e.target.value })} />
+                                            </div>
+                                            <div className="modal-input">
+                                                <label>FOIR Ratio</label>
+                                                <input value={selectedPolicy.foir || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, foir: e.target.value })} />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-section">
+                                        <label className="section-label">Exceptions & Special Cases</label>
+                                        <div className="modal-input">
+                                            <label>Obligation Exceptions (Intelligence)</label>
+                                            <textarea
+                                                rows="3"
+                                                value={selectedPolicy.obligation_exception || ''}
+                                                onChange={(e) => setSelectedPolicy({ ...selectedPolicy, obligation_exception: e.target.value })}
+                                            />
+                                        </div>
+                                        <div className="modal-input">
+                                            <label>CC BT Policy</label>
+                                            <input value={selectedPolicy.cc_bt || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, cc_bt: e.target.value })} />
+                                        </div>
+                                        <div className="modal-input">
+                                            <label>Residence Proof</label>
+                                            <input value={selectedPolicy.residence_proof || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, residence_proof: e.target.value })} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="modal-actions">
+                                    <button type="button" className="cancel-btn" onClick={() => setShowPolicyModal(false)}>Discard</button>
+                                    <button type="submit" className="save-btn">Update Partner Details</button>
+                                </div>
+                            </form>
                         </div>
+                    </div>
+                )
+            }
 
-                        <form onSubmit={handleSavePolicy} className="policy-form">
-                            <div className="form-scrollable">
-                                <div className="form-section">
-                                    <label className="section-label">Financial Thresholds</label>
-                                    <div className="form-grid">
-                                        <div className="modal-input">
-                                            <label>Partner Name</label>
-                                            <input value={selectedPolicy.bank_name || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, bank_name: e.target.value })} required />
-                                        </div>
-                                        <div className="modal-input">
-                                            <label>Min Income</label>
-                                            <input value={selectedPolicy.income || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, income: e.target.value })} />
-                                        </div>
-                                        <div className="modal-input">
-                                            <label>IRR (Interest)</label>
-                                            <input value={selectedPolicy.irr || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, irr: e.target.value })} />
-                                        </div>
-                                        <div className="modal-input">
-                                            <label>Max Tenor (Mon)</label>
-                                            <input type="number" value={selectedPolicy.tenor || 0} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, tenor: e.target.value })} />
-                                        </div>
+            {showCompanyModal && (
+                <div className="admin-modal-overlay">
+                    <div className="admin-modal animate-pop">
+                        <div className="modal-header">
+                            <h2>{companyForm.id ? 'Edit Repository' : 'Upload Repository'}</h2>
+                            <button className="close-modal" onClick={() => { setShowCompanyModal(false); setShowBankDropdown(false); }}>×</button>
+                        </div>
+                        <form onSubmit={handleSaveCompanyFile}>
+                            <div className="modal-input">
+                                <label>Target Bank</label>
+                                <div className="custom-dropdown-wrap">
+                                    <div
+                                        className={`custom-select-trigger ${showBankDropdown ? 'active' : ''}`}
+                                        onClick={() => setShowBankDropdown(!showBankDropdown)}
+                                    >
+                                        <span>{companyForm.bank_name || 'Select Bank'}</span>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6" /></svg>
                                     </div>
-                                </div>
 
-                                <div className="form-section">
-                                    <label className="section-label">Lending Rules & Compliance</label>
-                                    <div className="form-grid">
-                                        <div className="modal-input">
-                                            <label>CIBIL Minimum</label>
-                                            <input value={selectedPolicy.cibil || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, cibil: e.target.value })} />
+                                    {showBankDropdown && (
+                                        <div className="custom-options-panel">
+                                            <div className="dropdown-search-wrap">
+                                                <input
+                                                    type="text"
+                                                    className="dropdown-search-input"
+                                                    placeholder="Filter banking partners..."
+                                                    value={bankSearch}
+                                                    onChange={(e) => setBankSearch(e.target.value)}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    autoFocus
+                                                />
+                                            </div>
+                                            <div style={{ maxHeight: '240px', overflowY: 'auto', scrollbarWidth: 'thin' }}>
+                                                {(bankSearch ? ALL_BANKS.filter(b => b.toLowerCase().includes(bankSearch.toLowerCase())) : ALL_BANKS).map(bank => (
+                                                    <div
+                                                        key={bank}
+                                                        className="option-item"
+                                                        onClick={() => {
+                                                            setCompanyForm({ ...companyForm, bank_name: bank });
+                                                            setShowBankDropdown(false);
+                                                            setBankSearch('');
+                                                        }}
+                                                    >
+                                                        <div className="option-logo-wrap" style={{ width: '24px', height: '24px' }}>
+                                                            <img
+                                                                src={BANK_LOGOS[bank] || '/favicon.ico'}
+                                                                alt=""
+                                                                style={{ width: '24px', height: '24px', objectFit: 'contain' }}
+                                                            />
+                                                        </div>
+                                                        <span>{bank}</span>
+                                                    </div>
+                                                ))}
+                                                {bankSearch && ALL_BANKS.filter(b => b.toLowerCase().includes(bankSearch.toLowerCase())).length === 0 && (
+                                                    <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                                        No banking partners match your search
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                        <div className="modal-input">
-                                            <label>BT Status</label>
-                                            <input value={selectedPolicy.bt || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, bt: e.target.value })} />
-                                        </div>
-                                        <div className="modal-input">
-                                            <label>PF/PT Status</label>
-                                            <input value={selectedPolicy.pf_pt || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, pf_pt: e.target.value })} />
-                                        </div>
-                                        <div className="modal-input">
-                                            <label>FOIR Ratio</label>
-                                            <input value={selectedPolicy.foir || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, foir: e.target.value })} />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="form-section">
-                                    <label className="section-label">Exceptions & Special Cases</label>
-                                    <div className="modal-input">
-                                        <label>Obligation Exceptions (Intelligence)</label>
-                                        <textarea
-                                            rows="3"
-                                            value={selectedPolicy.obligation_exception || ''}
-                                            onChange={(e) => setSelectedPolicy({ ...selectedPolicy, obligation_exception: e.target.value })}
-                                        />
-                                    </div>
-                                    <div className="modal-input">
-                                        <label>CC BT Policy</label>
-                                        <input value={selectedPolicy.cc_bt || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, cc_bt: e.target.value })} />
-                                    </div>
-                                    <div className="modal-input">
-                                        <label>Residence Proof</label>
-                                        <input value={selectedPolicy.residence_proof || ''} onChange={(e) => setSelectedPolicy({ ...selectedPolicy, residence_proof: e.target.value })} />
-                                    </div>
+                                    )}
                                 </div>
                             </div>
-
+                            <div className="modal-input">
+                                <label>Display Name</label>
+                                <input
+                                    value={companyForm.display_name}
+                                    onChange={(e) => setCompanyForm({ ...companyForm, display_name: e.target.value })}
+                                    placeholder="e.g. Master List 2024"
+                                    required
+                                />
+                            </div>
+                            <div className="modal-input">
+                                <label>Description</label>
+                                <input
+                                    value={companyForm.description}
+                                    onChange={(e) => setCompanyForm({ ...companyForm, description: e.target.value })}
+                                    placeholder="Brief details about this list"
+                                />
+                            </div>
+                            <div className="modal-input">
+                                <label>Excel File (.xlsx, .xlsb)</label>
+                                <input
+                                    type="file"
+                                    id="company-file-input"
+                                    accept=".xlsx, .xlsb, .xls"
+                                    required={!companyForm.file_url}
+                                    style={{ padding: '0.8rem' }}
+                                />
+                            </div>
+                            <div className="modal-input">
+                                <label>Accent color</label>
+                                <input
+                                    type="color"
+                                    value={companyForm.color_code}
+                                    onChange={(e) => setCompanyForm({ ...companyForm, color_code: e.target.value })}
+                                    style={{ height: '40px', padding: '2px' }}
+                                />
+                            </div>
                             <div className="modal-actions">
-                                <button type="button" className="cancel-btn" onClick={() => setShowPolicyModal(false)}>Discard</button>
-                                <button type="submit" className="save-btn">Update Partner Details</button>
+                                <button type="button" className="cancel-btn" onClick={() => { setShowCompanyModal(false); setShowBankDropdown(false); }}>Cancel</button>
+                                <button type="submit" className="save-btn" disabled={isUploading}>
+                                    {isUploading ? 'Transferring File...' : 'Secure Upload'}
+                                </button>
                             </div>
                         </form>
                     </div>
                 </div>
             )}
 
-            {showClientModal && selectedClient && (
-                <div className="admin-modal-overlay">
-                    <div className="admin-modal audit-modal animate-pop">
-                        <div className="modal-header">
-                            <div className="modal-title-wrap">
-                                <div className="c-avatar-mini">{selectedClient.client_name?.charAt(0)}</div>
-                                <div>
-                                    <h2>Application Audit: {selectedClient.client_name}</h2>
-                                    <p>Detailed Lead Logic & Verification</p>
-                                </div>
-                            </div>
-                            <button className="close-modal" onClick={() => setShowClientModal(false)} style={{ fontSize: '1.2rem', padding: '10px' }}>×</button>
-                        </div>
-
-                        <div className="audit-content">
-                            <div className="audit-section">
-                                <label className="section-label">Qualified Responses</label>
-                                <div className="h-qa-grid">
-                                    {Object.entries(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).map(([key, val]) => {
-                                        if (['reasons', 'results', 'probable'].includes(key)) return null;
-                                        return (
-                                            <div key={key} className="qa-pill-detailed">
-                                                <div className="qa-label-wrap">
-                                                    <span className="q-id">{key.toUpperCase()}</span>
-                                                    <span className="q-text">{QUESTION_MAP[key] || key}</span>
-                                                </div>
-                                                <span className={`a-val ${val === 'Yes' ? 'pass' : 'fail'}`}>{val}</span>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-
-                            <div className="audit-grid-split">
-                                <div className="audit-box">
-                                    <label className="section-label">System Matches (Results)</label>
-                                    <div className="match-list">
-                                        {(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).results?.map(r => (
-                                            <div key={r} className="match-item result">
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>
-                                                {r}
-                                            </div>
-                                        ))}
-                                        {!(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).results?.length && <p className="none-text">No matches found</p>}
+            {
+                showQuestionModal && (
+                    <div className="admin-modal-overlay">
+                        <div className="admin-modal policy-modal animate-pop">
+                            <div className="modal-header">
+                                <div className="modal-title-wrap">
+                                    <div>
+                                        <h2>{editingQuestion ? 'Edit Question' : 'Add New Question'}</h2>
+                                        <p>Define question logic and bank eligibility</p>
                                     </div>
                                 </div>
-                                <div className="audit-box">
-                                    <label className="section-label">Probable Banks</label>
-                                    <div className="match-list">
-                                        {(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).probable?.map(p => (
-                                            <div key={p} className="match-item probable">
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
-                                                {p}
+                                <button className="close-modal" onClick={() => setShowQuestionModal(false)}>×</button>
+                            </div>
+
+                            <form onSubmit={handleSaveQuestion} className="policy-form">
+                                <div className="form-scrollable">
+                                    <div className="form-section">
+                                        <label className="section-label">Question Details</label>
+                                        <div className="form-grid">
+                                            <div className="modal-input">
+                                                <label>Question Key (e.g., q1)</label>
+                                                <input value={questionForm.key} onChange={(e) => setQuestionForm({ ...questionForm, key: e.target.value })} required />
                                             </div>
-                                        ))}
-                                        {!(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).probable?.length && <p className="none-text">No probables</p>}
+                                            <div className="modal-input">
+                                                <label>Display Label</label>
+                                                <input value={questionForm.label} onChange={(e) => setQuestionForm({ ...questionForm, label: e.target.value })} required />
+                                            </div>
+                                            <div className="modal-input full">
+                                                <label>Full Question Text</label>
+                                                <input value={questionForm.question_text} onChange={(e) => setQuestionForm({ ...questionForm, question_text: e.target.value })} required />
+                                            </div>
+                                            <div className="modal-input">
+                                                <label>Sort Order</label>
+                                                <input type="number" value={questionForm.sort_order} onChange={(e) => setQuestionForm({ ...questionForm, sort_order: parseInt(e.target.value) || 0 })} />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-section">
+                                        <label className="section-label">Eligibility Mapping (Yes Response)</label>
+                                        <div className="eligibility-config">
+                                            <div className="bank-selector-grid">
+                                                {policies.map(p => (
+                                                    <div key={p.id} className="bank-select-item" onClick={() => {
+                                                        const newYesBanks = questionForm.yes_eligible_banks.includes(p.bank_name)
+                                                            ? questionForm.yes_eligible_banks.filter(b => b !== p.bank_name)
+                                                            : [...questionForm.yes_eligible_banks, p.bank_name];
+                                                        setQuestionForm({ ...questionForm, yes_eligible_banks: newYesBanks });
+                                                    }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={questionForm.yes_eligible_banks.includes(p.bank_name)}
+                                                            readOnly
+                                                        />
+                                                        {p.bank_name}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-section">
+                                        <label className="section-label">Eligibility Mapping (No Response)</label>
+                                        <div className="eligibility-config">
+                                            <div className="bank-selector-grid">
+                                                {policies.map(p => (
+                                                    <div key={p.id} className="bank-select-item" onClick={() => {
+                                                        const newNoBanks = questionForm.no_eligible_banks.includes(p.bank_name)
+                                                            ? questionForm.no_eligible_banks.filter(b => b !== p.bank_name)
+                                                            : [...questionForm.no_eligible_banks, p.bank_name];
+                                                        setQuestionForm({ ...questionForm, no_eligible_banks: newNoBanks });
+                                                    }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={questionForm.no_eligible_banks.includes(p.bank_name)}
+                                                            readOnly
+                                                        />
+                                                        {p.bank_name}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
 
-                            <div className="audit-footer-stats">
-                                <div className="f-stat">
-                                    <label>Reported Salary</label>
-                                    <span>₹{parseFloat(selectedClient.salary).toLocaleString()}</span>
+                                <div className="modal-actions">
+                                    <button type="button" className="cancel-btn" onClick={() => setShowQuestionModal(false)}>Discard</button>
+                                    <button type="submit" className="save-btn">Save Question</button>
                                 </div>
-                                <div className="f-stat">
-                                    <label>Final Status</label>
-                                    <span className={`status-pill filled ${selectedClient.status}`}>{selectedClient.status}</span>
-                                </div>
-                                <div className="f-stat">
-                                    <label>Loginned By</label>
-                                    <span>Agent: {selectedClient.loginned_by}</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="modal-actions">
-                            <button className="save-btn" onClick={() => setShowClientModal(false)}>Close Audit</button>
+                            </form>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
+
+            {
+                showClientModal && selectedClient && (
+                    <div className="admin-modal-overlay">
+                        <div className="admin-modal audit-modal animate-pop">
+                            <div className="modal-header">
+                                <div className="modal-title-wrap">
+                                    <div className="c-avatar-mini">{selectedClient.client_name?.charAt(0)}</div>
+                                    <div>
+                                        <h2>Application Audit: {selectedClient.client_name}</h2>
+                                        <p>Detailed Lead Logic & Verification</p>
+                                    </div>
+                                </div>
+                                <button className="close-modal" onClick={() => setShowClientModal(false)} style={{ fontSize: '1.2rem', padding: '10px' }}>×</button>
+                            </div>
+
+                            <div className="audit-content">
+                                <div className="audit-section">
+                                    <label className="section-label">Qualified Responses</label>
+                                    <div className="h-qa-grid">
+                                        {Object.entries(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).map(([key, val]) => {
+                                            if (['reasons', 'results', 'probable'].includes(key)) return null;
+                                            return (
+                                                <div key={key} className="qa-pill-detailed">
+                                                    <div className="qa-label-wrap">
+                                                        <span className="q-id">{key.toUpperCase()}</span>
+                                                        <span className="q-text">{questionMap[key] || key}</span>
+                                                    </div>
+                                                    <span className={`a-val ${val === 'Yes' ? 'pass' : 'fail'}`}>{val}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div className="audit-grid-split">
+                                    <div className="audit-box">
+                                        <label className="section-label">System Matches (Results)</label>
+                                        <div className="match-list">
+                                            {(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).results?.map(r => (
+                                                <div key={r} className="match-item result">
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>
+                                                    {r}
+                                                </div>
+                                            ))}
+                                            {!(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).results?.length && <p className="none-text">No matches found</p>}
+                                        </div>
+                                    </div>
+                                    <div className="audit-box">
+                                        <label className="section-label">Probable Banks</label>
+                                        <div className="match-list">
+                                            {(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).probable?.map(p => (
+                                                <div key={p} className="match-item probable">
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+                                                    {p}
+                                                </div>
+                                            ))}
+                                            {!(typeof selectedClient.questions === 'string' ? JSON.parse(selectedClient.questions) : (selectedClient.questions || {})).probable?.length && <p className="none-text">No probables</p>}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="audit-footer-stats">
+                                    <div className="f-stat">
+                                        <label>Reported Salary</label>
+                                        <span>₹{parseFloat(selectedClient.salary).toLocaleString()}</span>
+                                    </div>
+                                    <div className="f-stat">
+                                        <label>Final Status</label>
+                                        <span className={`status-pill filled ${selectedClient.status}`}>{selectedClient.status}</span>
+                                    </div>
+                                    <div className="f-stat">
+                                        <label>Loginned By</label>
+                                        <span>Agent: {selectedClient.loginned_by}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="modal-actions">
+                                <button className="save-btn" onClick={() => setShowClientModal(false)}>Close Audit</button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
 
             <nav className="admin-mobile-nav">
                 <button className={activeTab === 'employees' ? 'active' : ''} onClick={() => { setActiveTab('employees'); setSelectedEmployee(null); }}>
@@ -1234,6 +1857,10 @@ const AdminDashboard = ({ onLogout }) => {
                 <button className={activeTab === 'policies' ? 'active' : ''} onClick={() => { setActiveTab('policies'); setSelectedEmployee(null); }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
                     <span>Policy</span>
+                </button>
+                <button className={activeTab === 'questions' ? 'active' : ''} onClick={() => { setActiveTab('questions'); setSelectedEmployee(null); }}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    <span>Loan Config</span>
                 </button>
             </nav>
 
@@ -1340,7 +1967,32 @@ const AdminDashboard = ({ onLogout }) => {
                 .admin-logout { padding: 0.8rem; border: 1px solid rgba(239, 68, 68, 0.2); color: #ef4444; border-radius: 12px; background: transparent; cursor: pointer; transition: 0.3s; font-size: 0.85rem; text-align: center; }
                 .admin-logout:hover { background: rgba(239, 68, 68, 0.05); }
 
-                .admin-viewport { flex: 1; overflow-y: auto; padding: 3rem 4rem; }
+                .admin-viewport { flex: 1; overflow-y: auto; padding: 3rem 4rem; scrollbar-width: thin; }
+                
+                .question-admin-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; padding: 1.5rem; margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
+                .q-card-main { display: flex; justify-content: space-between; align-items: flex-start; }
+                .q-badge { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em; color: #6366f1; font-weight: 700; margin-bottom: 0.5rem; }
+                .q-info h3 { font-size: 1.1rem; font-weight: 400; margin-bottom: 0.4rem; color: var(--text); }
+                .q-label-sub { font-size: 0.8rem; color: var(--text-muted); }
+                .q-actions { display: flex; gap: 8px; }
+                .q-edit-btn, .q-delete-btn { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; transition: 0.2s; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); }
+                .q-edit-btn:hover { background: var(--border); border-color: #6366f1; color: #6366f1; }
+                .q-delete-btn:hover { background: rgba(239, 68, 68, 0.1); border-color: #ef4444; color: #ef4444; }
+
+                .q-eligibility-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding-top: 1rem; border-top: 1px solid var(--border); }
+                .e-summary-item label { display: block; font-size: 0.6rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; }
+                .e-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+                .e-tag { font-size: 0.65rem; padding: 2px 8px; border-radius: 4px; border: 1px solid transparent; }
+                .e-tag.yes { background: rgba(16, 185, 129, 0.1); color: #10b981; border-color: rgba(16, 185, 129, 0.2); }
+                .e-tag.no { background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.2); }
+                .none { font-size: 0.7rem; color: var(--text-muted); font-style: italic; }
+
+                .bank-selector-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }
+                .bank-select-item { display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; transition: 0.2s; font-size: 0.8rem; }
+                .bank-select-item:hover { background: var(--input-bg); }
+                .bank-select-item input { width: 16px; height: 16px; cursor: pointer; }
+                .eligibility-config { margin-top: 1rem; }
+                
                 .view-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2.5rem; gap: 2rem; }
                 .head-text h1 { font-size: 1.8rem; font-weight: 200; margin-bottom: 0.4rem; }
                 .head-text p { color: var(--text-muted); font-size: 0.9rem; font-weight: 300; }
@@ -1373,12 +2025,12 @@ const AdminDashboard = ({ onLogout }) => {
                 .employee-card.interactive:hover { transform: translateY(-4px); border-color: rgba(99, 102, 241, 0.3); }
                 
                 .emp-top { display: flex; align-items: center; gap: 15px; margin-bottom: 1.5rem; }
-                .emp-avatar { 
+                .emp-avatar-minimal { 
                     width: 45px; height: 45px; background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); 
                     color: white; border-radius: 14px; display: flex; align-items: center; justify-content: center; 
                     font-weight: 600; font-size: 1.1rem; position: relative;
                 }
-                .emp-avatar .online-dot { 
+                .emp-avatar-minimal .online-dot { 
                     position: absolute; bottom: -2px; right: -2px; width: 12px; height: 12px; 
                     background: #10b981; border: 2px solid var(--card-bg); border-radius: 50%; 
                 }
@@ -1628,6 +2280,13 @@ const AdminDashboard = ({ onLogout }) => {
                 .modal-input input:focus { border-color: #6366f1; }
                 
                 .password-wrap { position: relative; display: flex; align-items: center; }
+                .input-prefix-wrap { position: relative; display: flex; align-items: center; }
+                .input-prefix-wrap .prefix { 
+                    position: absolute; left: 1.2rem; color: var(--text-muted); 
+                    font-size: 0.9rem; font-weight: 500; border-right: 1px solid var(--border);
+                    padding-right: 10px; height: 20px; display: flex; align-items: center;
+                }
+                .input-prefix-wrap input { padding-left: 3.8rem !important; }
                 .password-eye { position: absolute; right: 0.75rem; background: none; border: none; color: #64748b; cursor: pointer; display: flex; padding: 0.5rem; transition: 0.3s; }
                 .password-eye:hover { color: #fff; }
                 .admin-mobile-header { display: none; }
@@ -1699,8 +2358,31 @@ const AdminDashboard = ({ onLogout }) => {
                     .admin-mobile-nav button svg { transition: 0.3s; }
                     .admin-mobile-nav button.active svg { transform: translateY(-3px); filter: drop-shadow(0 0 8px #6366f1); }
                 }
+
+                .repo-admin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 1.5rem; }
+                .repo-admin-card { 
+                    background: var(--card-bg); border: 1px solid var(--border); border-radius: 24px; 
+                    padding: 1.5rem; transition: 0.3s; position: relative;
+                }
+                .repo-admin-card:hover { transform: translateY(-4px); border-color: var(--accent); }
+                .repo-top { display: flex; align-items: center; gap: 12px; margin-bottom: 1rem; }
+                .repo-icon { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+                .repo-info h3 { font-size: 1rem; font-weight: 500; margin-bottom: 2px; }
+                .bank-tag { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+                .repo-delete-btn { margin-left: auto; background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 8px; border-radius: 8px; transition: 0.2s; }
+                .repo-delete-btn:hover { color: #ef4444; background: rgba(239, 68, 68, 0.1); }
+                .repo-desc { font-size: 0.8rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 1.5rem; min-height: 3em; }
+                .repo-footer { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border); padding-top: 1rem; }
+                .repo-date { font-size: 0.65rem; color: var(--text-muted); }
+                .download-link { font-size: 0.75rem; color: var(--accent); font-weight: 500; text-decoration: none; }
+                .download-link:hover { text-decoration: underline; }
+                .empty-state-full { padding: 5rem 2rem; text-align: center; border: 2px dashed var(--border); border-radius: 30px; margin-top: 2rem; color: var(--text-muted); }
+                .animate-fade { animation: fadeIn 0.4s ease; }
+                .animate-pop { animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+                @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+                @keyframes popIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
             `}</style>
-        </div>
+        </div >
     );
 };
 

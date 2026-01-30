@@ -9,6 +9,10 @@ import Tracking from './components/Tracking'
 import PolicySheet from './components/PolicySheet'
 import ClientAccess from './components/ClientAccess'
 import EMICalculator from './components/EMICalculator'
+import CompanyList from './components/CompanyList'
+import IncentiveTracker from './components/IncentiveTracker'
+
+import { syncDailyIncentives } from './utils/incentiveSync'
 
 import './App.css'
 
@@ -24,7 +28,13 @@ function App() {
     const savedAdmin = localStorage.getItem('admin_user');
 
     if (savedUser) {
-      try { setUser(JSON.parse(savedUser)); } catch (e) { localStorage.removeItem('app_user'); }
+      try {
+        const parsedUser = JSON.parse(savedUser);
+        setUser(parsedUser);
+        syncDailyIncentives(parsedUser.username);
+      } catch (e) {
+        localStorage.removeItem('app_user');
+      }
     }
     if (savedAdmin) {
       try { setAdminUser(JSON.parse(savedAdmin)); } catch (e) { localStorage.removeItem('admin_user'); }
@@ -36,6 +46,7 @@ function App() {
   const handleLoginSuccess = (userData) => {
     setUser(userData)
     localStorage.setItem('app_user', JSON.stringify(userData))
+    syncDailyIncentives(userData.username);
   }
 
   const handleAdminLoginSuccess = (adminData) => {
@@ -86,6 +97,7 @@ function App() {
         <Route path="/client-tracking" element={<ProtectedAgentRoute><Tracking /></ProtectedAgentRoute>} />
         <Route path="/policy-sheet" element={<ProtectedAgentRoute><PolicySheet /></ProtectedAgentRoute>} />
         <Route path="/emi-calculator" element={<ProtectedAgentRoute><EMICalculator /></ProtectedAgentRoute>} />
+        <Route path="/company-list" element={<ProtectedAgentRoute><CompanyList /></ProtectedAgentRoute>} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />

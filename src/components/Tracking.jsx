@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../supabase';
 
 import { ALL_BANKS, BANK_LOGOS } from '../constants/banks';
+import { syncDailyIncentives } from '../utils/incentiveSync';
 
 const Tracking = () => {
     const [clients, setClients] = useState([]);
@@ -47,6 +48,14 @@ const Tracking = () => {
             setClients(prev => prev.map(c => c.id === clientId ? { ...c, status: newStatus } : c));
             if (selectedClient && selectedClient.id === clientId) {
                 setSelectedClient(prev => ({ ...prev, status: newStatus }));
+            }
+
+            // If status changed to disbursed, sync the incentive table for this agent
+            if (newStatus === 'disbursed') {
+                const client = clients.find(c => c.id === clientId);
+                if (client?.loginned_by) {
+                    syncDailyIncentives(client.loginned_by);
+                }
             }
         } catch (error) {
             alert('Status update failed: ' + error.message);
