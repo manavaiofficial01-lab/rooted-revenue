@@ -93,4 +93,4 @@ export const syncDailyIncentives = async (username) => {
         console.error('Error in syncDailyIncentives:', err.message);
         return false;
     }
-};
+};  
