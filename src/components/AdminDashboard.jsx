@@ -917,7 +917,10 @@ const AdminDashboard = ({ onLogout }) => {
                                         <div className="q-info">
                                             <span className="q-badge">{q.key}</span>
                                             <h3>{q.question_text}</h3>
-                                            <p className="q-label-sub">Label: {q.label} | Order: {q.sort_order}</p>
+                                            <p className="q-label-sub">
+                                                Label: {q.label} | Order: {q.sort_order}
+                                                {(q.key === 'q1' || q.key === 'q2') && <span className="formality-tag"> (Formality)</span>}
+                                            </p>
                                         </div>
                                         <div className="q-actions">
                                             <button className="q-edit-btn" onClick={() => handleEditQuestion(q)}>
@@ -1704,22 +1707,26 @@ const AdminDashboard = ({ onLogout }) => {
                                     </div>
 
                                     <div className="form-section">
-                                        <label className="section-label">Eligibility Mapping (Yes Response)</label>
+                                        <div className="section-header-row">
+                                            <label className="section-label">Eligibility Mapping (Yes Response)</label>
+                                            <div className="bulk-actions">
+                                                <button type="button" className="text-link-btn" onClick={() => setQuestionForm({ ...questionForm, yes_eligible_banks: [...ALL_BANKS] })}>Select All</button>
+                                                <button type="button" className="text-link-btn" onClick={() => setQuestionForm({ ...questionForm, yes_eligible_banks: [] })}>Clear All</button>
+                                            </div>
+                                        </div>
                                         <div className="eligibility-config">
                                             <div className="bank-selector-grid">
-                                                {policies.map(p => (
-                                                    <div key={p.id} className="bank-select-item" onClick={() => {
-                                                        const newYesBanks = questionForm.yes_eligible_banks.includes(p.bank_name)
-                                                            ? questionForm.yes_eligible_banks.filter(b => b !== p.bank_name)
-                                                            : [...questionForm.yes_eligible_banks, p.bank_name];
+                                                {ALL_BANKS.map(bank => (
+                                                    <div key={bank} className={`bank-select-item ${questionForm.yes_eligible_banks.includes(bank) ? 'selected' : ''}`} onClick={() => {
+                                                        const newYesBanks = questionForm.yes_eligible_banks.includes(bank)
+                                                            ? questionForm.yes_eligible_banks.filter(b => b !== bank)
+                                                            : [...questionForm.yes_eligible_banks, bank];
                                                         setQuestionForm({ ...questionForm, yes_eligible_banks: newYesBanks });
                                                     }}>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={questionForm.yes_eligible_banks.includes(p.bank_name)}
-                                                            readOnly
-                                                        />
-                                                        {p.bank_name}
+                                                        <div className="check-box">
+                                                            {questionForm.yes_eligible_banks.includes(bank) && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><polyline points="20 6 9 17 4 12" /></svg>}
+                                                        </div>
+                                                        <span className="b-name">{bank}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -1727,22 +1734,26 @@ const AdminDashboard = ({ onLogout }) => {
                                     </div>
 
                                     <div className="form-section">
-                                        <label className="section-label">Eligibility Mapping (No Response)</label>
+                                        <div className="section-header-row">
+                                            <label className="section-label">Eligibility Mapping (No Response)</label>
+                                            <div className="bulk-actions">
+                                                <button type="button" className="text-link-btn" onClick={() => setQuestionForm({ ...questionForm, no_eligible_banks: [...ALL_BANKS] })}>Select All</button>
+                                                <button type="button" className="text-link-btn" onClick={() => setQuestionForm({ ...questionForm, no_eligible_banks: [] })}>Clear All</button>
+                                            </div>
+                                        </div>
                                         <div className="eligibility-config">
                                             <div className="bank-selector-grid">
-                                                {policies.map(p => (
-                                                    <div key={p.id} className="bank-select-item" onClick={() => {
-                                                        const newNoBanks = questionForm.no_eligible_banks.includes(p.bank_name)
-                                                            ? questionForm.no_eligible_banks.filter(b => b !== p.bank_name)
-                                                            : [...questionForm.no_eligible_banks, p.bank_name];
+                                                {ALL_BANKS.map(bank => (
+                                                    <div key={bank} className={`bank-select-item ${questionForm.no_eligible_banks.includes(bank) ? 'selected' : ''}`} onClick={() => {
+                                                        const newNoBanks = questionForm.no_eligible_banks.includes(bank)
+                                                            ? questionForm.no_eligible_banks.filter(b => b !== bank)
+                                                            : [...questionForm.no_eligible_banks, bank];
                                                         setQuestionForm({ ...questionForm, no_eligible_banks: newNoBanks });
                                                     }}>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={questionForm.no_eligible_banks.includes(p.bank_name)}
-                                                            readOnly
-                                                        />
-                                                        {p.bank_name}
+                                                        <div className="check-box">
+                                                            {questionForm.no_eligible_banks.includes(bank) && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><polyline points="20 6 9 17 4 12" /></svg>}
+                                                        </div>
+                                                        <span className="b-name">{bank}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -1986,11 +1997,21 @@ const AdminDashboard = ({ onLogout }) => {
                 .e-tag.yes { background: rgba(16, 185, 129, 0.1); color: #10b981; border-color: rgba(16, 185, 129, 0.2); }
                 .e-tag.no { background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.2); }
                 .none { font-size: 0.7rem; color: var(--text-muted); font-style: italic; }
+                .formality-tag { color: #f59e0b; font-weight: 600; font-size: 0.7rem; }
 
                 .bank-selector-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }
-                .bank-select-item { display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; cursor: pointer; transition: 0.2s; font-size: 0.8rem; }
-                .bank-select-item:hover { background: var(--input-bg); }
-                .bank-select-item input { width: 16px; height: 16px; cursor: pointer; }
+                .bank-select-item { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; cursor: pointer; transition: 0.2s; font-size: 0.75rem; background: var(--card-bg); }
+                .bank-select-item:hover { transform: translateY(-2px); border-color: var(--primary); }
+                .bank-select-item.selected { background: var(--primary-glow); border-color: var(--primary); }
+                .bank-select-item .check-box { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--border); display: flex; align-items: center; justify-content: center; color: white; background: transparent; transition: 0.2s; }
+                .bank-select-item.selected .check-box { background: var(--primary); border-color: var(--primary); }
+                .bank-select-item .b-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+                .section-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+                .section-header-row .section-label { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+                .bulk-actions { display: flex; gap: 12px; }
+                .text-link-btn { background: none; border: none; color: var(--primary); font-size: 0.7rem; font-weight: 600; cursor: pointer; text-transform: uppercase; padding: 4px 8px; border-radius: 4px; transition: 0.2s; }
+                .text-link-btn:hover { background: var(--primary-glow); }
                 .eligibility-config { margin-top: 1rem; }
                 
                 .view-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2.5rem; gap: 2rem; }

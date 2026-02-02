@@ -94,7 +94,7 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
         const panValue = formData.pan.trim().toUpperCase() || null;
         const aadharValue = formData.aadhar.trim() || null;
 
-        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.name || 'Vicky';
+        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.username || 'Vicky';
 
         try {
             let existing = null;
@@ -168,6 +168,9 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
         ruleSources.forEach(rule => {
             const ans = currentAnswers[rule.key];
             if (ans !== null) {
+                // Skip q1 and q2 for actual bank filtering - they are just for formality
+                if (rule.key === 'q1' || rule.key === 'q2') return;
+
                 ruleCount++;
                 const eligibleBanks = ans === 'Yes' ? (rule.yes_eligible_banks || []) : (rule.no_eligible_banks || []);
                 ALL_BANKS.forEach(bank => {
@@ -210,6 +213,9 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
         ruleSources.forEach(rule => {
             const ans = currentAnswers[rule.key];
             if (ans !== null) {
+                // Skip q1 and q2 for actual bank filtering - they are just for formality
+                if (rule.key === 'q1' || rule.key === 'q2') return;
+
                 ruleCount++;
                 const eligibleBanks = ans === 'Yes' ? (rule.yes_eligible_banks || []) : (rule.no_eligible_banks || []);
                 ALL_BANKS.forEach(bank => {
@@ -245,6 +251,7 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
     };
 
     const saveAnswers = async (finalAnswers, eligible, probable, reasons) => {
+        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.username || 'Vicky';
         try {
             const yesArr = Object.entries(finalAnswers).filter(([k, v]) => v === 'Yes').map(([k, v]) => k);
             const noArr = Object.entries(finalAnswers).filter(([k, v]) => v === 'No').map(([k, v]) => k);
@@ -255,7 +262,7 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                     questions: { ...finalAnswers, results: eligible, probable: probable, reasons: reasons },
                     yes_answers: yesArr,
                     no_answers: noArr,
-                    // Rejection logic: No eligible OR probable banks identified, or hard rejection condition met
+                    loginned_by: currentUser,
                     status: eligible.length > 0 || probable.length > 0 ? 'follow_up' : 'rejected'
                 })
                 .eq('id', clientId);
@@ -282,6 +289,7 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
     };
 
     const handleFinalConfirm = async () => {
+        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.username || 'Vicky';
         setLoading(true);
         try {
             const { error } = await supabase
@@ -290,6 +298,7 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                     eligibility: finalEligibility,
                     emi_amount: finalEmi,
                     interest: calcData.interestRate,
+                    loginned_by: currentUser,
                     status: 'follow_up'
                 })
                 .eq('id', clientId);

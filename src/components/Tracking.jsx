@@ -16,12 +16,21 @@ const Tracking = () => {
     }, []);
 
     const fetchClients = async () => {
+        const appUser = JSON.parse(localStorage.getItem('app_user'));
+        const currentUser = appUser?.username;
+
         try {
             setLoading(true);
-            const { data, error } = await supabase
+            let query = supabase
                 .from('client_logins')
                 .select('*')
                 .order('created_at', { ascending: false });
+
+            if (currentUser) {
+                query = query.eq('loginned_by', currentUser);
+            }
+
+            const { data, error } = await query;
 
             if (error) throw error;
             setClients(data || []);
@@ -33,7 +42,7 @@ const Tracking = () => {
     };
 
     const handleStatusUpdate = async (clientId, newStatus) => {
-        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.name || 'Vicky';
+        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.username || 'Vicky';
         try {
             const { error } = await supabase
                 .from('client_logins')
@@ -63,7 +72,7 @@ const Tracking = () => {
     };
 
     const handleIdentifierUpdate = async (clientId, field, newValue) => {
-        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.name || 'Vicky';
+        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.username || 'Vicky';
         try {
             const { error } = await supabase
                 .from('client_logins')
@@ -116,7 +125,7 @@ const Tracking = () => {
     };
 
     const handleAnswerUpdate = async (client, qKey, newVal) => {
-        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.name || 'Vicky';
+        const currentUser = JSON.parse(localStorage.getItem('app_user'))?.username || 'Vicky';
         const currentQs = typeof client.questions === 'string' ? JSON.parse(client.questions) : client.questions;
         const newQs = { ...currentQs, [qKey]: newVal };
 
@@ -440,6 +449,7 @@ const Tracking = () => {
                                 <th>Lifecycle Status</th>
                                 <th>Financial Exposure</th>
                                 <th>Identifiers</th>
+                                <th>Managed By</th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -487,6 +497,12 @@ const Tracking = () => {
                                             <div className="id-stack-cell">
                                                 <span className="pan">PAN: {client.pan || 'N/A'}</span>
                                                 <span className="sub">UID: {client.aadhar ? 'Verified' : 'Unsigned'}</span>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div className="owner-cell">
+                                                <span className="agent">{client.loginned_by || 'System'}</span>
+                                                <span className="sub">Agent Assigned</span>
                                             </div>
                                         </td>
                                         <td className="action-cell">

@@ -1,8 +1,3 @@
--- Add columns to client_logins to track Yes/No answers explicitly as arrays
-ALTER TABLE client_logins 
-ADD COLUMN IF NOT EXISTS yes_answers TEXT[] DEFAULT '{}',
-ADD COLUMN IF NOT EXISTS no_answers TEXT[] DEFAULT '{}';
-
 -- Create the personal_questions table to store question definitions and bank eligibility rules
 CREATE TABLE IF NOT EXISTS personal_questions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -13,7 +8,6 @@ CREATE TABLE IF NOT EXISTS personal_questions (
     options JSONB DEFAULT '["Yes", "No"]'::jsonb,
     is_active BOOLEAN DEFAULT true,
     sort_order INT,
-    -- New columns to handle the bank logic via DB
     yes_eligible_banks TEXT[] DEFAULT '{}', -- Banks matching if answer is "Yes"
     no_eligible_banks TEXT[] DEFAULT '{}',  -- Banks matching if answer is "No"
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
