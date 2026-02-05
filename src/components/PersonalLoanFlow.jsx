@@ -11,7 +11,8 @@ const DIAGNOSTIC_LABELS = {
     q5: "Income Threshold (>25k)",
     q6: "Statutory Deductions",
     q7: "Address Verification",
-    q8: "Instrument Clearance (6m)"
+    q8: "Instrument Clearance (6m)",
+    Q9: "Company List"
 };
 
 const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
@@ -24,9 +25,7 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
         aadhar: '',
         pan: '',
     });
-    const [answers, setAnswers] = useState({
-        q1: null, q2: null, q3: null, q4: null, q5: null, q6: null, q7: null, q8: null,
-    });
+    const [answers, setAnswers] = useState({});
 
     const [loading, setLoading] = useState(false);
     const [clientId, setClientId] = useState(null);
@@ -242,7 +241,11 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
         setLiveEligibleBanks(live);
         setTimeout(() => setIsShuffling(false), 600);
 
-        if (q === 'q8') {
+        const isLastQuestion = dbQuestions.length > 0
+            ? q === dbQuestions[dbQuestions.length - 1].key
+            : q === 'q8';
+
+        if (isLastQuestion) {
             const { banks: eligible, probable, reasons } = calculateEligibility(newAnswers);
             setEligibleBanks(eligible);
             setProbableBanks(probable);
@@ -276,9 +279,14 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
             setStage(2);
             return;
         }
-        const keys = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8'];
+
+        const keys = dbQuestions.length > 0
+            ? dbQuestions.map(q => q.key)
+            : ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8'];
+
         const prevKey = keys[currentQIndex - 1];
-        const newAnswers = { ...answers, [prevKey]: null };
+        const newAnswers = { ...answers };
+        delete newAnswers[prevKey]; // Remove the answer for the current/previous question to go back
         setAnswers(newAnswers);
 
         // Update live filtering
@@ -442,18 +450,18 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
 
             {stage === 3 && (
                 <div className="glass-card quest-stage">
-                    {!answers.q8 ? (
+                    {(!answers[dbQuestions[dbQuestions.length - 1]?.key] && (dbQuestions.length > 0)) || (dbQuestions.length === 0 && !answers.q8) ? (
                         <>
                             <div className="quest-header">
                                 <div className="mini-progress">
-                                    <div className="progress-fill" style={{ width: `${(currentQIndex / 8) * 100}%` }}></div>
+                                    <div className="progress-fill" style={{ width: `${(currentQIndex / (dbQuestions.length || 8)) * 100}%` }}></div>
                                 </div>
                                 <div className="quest-meta-row">
                                     <button className="back-quest-btn" onClick={handlePrevious}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
                                         <span>Previous</span>
                                     </button>
-                                    <span className="quest-meta">Question {currentQIndex + 1} / 8</span>
+                                    <span className="quest-meta">Question {currentQIndex + 1} / {dbQuestions.length || 8}</span>
                                     <div className="logo-indicator">
                                         <div className="pulsing-dot"></div>
                                         <span>Evaluating Partners</span>
@@ -680,12 +688,18 @@ const PersonalLoanFlow = ({ onComplete, onCancel, loanType }) => {
                                 {(eligibleBanks.length > 0 || probableBanks.length > 0) ? (
                                     <div className="confirm-actions">
                                         <button className="confirm-btn primary" onClick={() => setStage(4)}>Continue calculations →</button>
-                                        <button className="text-btn" onClick={() => handleAnswer('q8', null)}>← Change Answers</button>
+                                        <button className="text-btn" onClick={() => {
+                                            const lastKey = dbQuestions.length > 0 ? dbQuestions[dbQuestions.length - 1].key : 'q8';
+                                            handleAnswer(lastKey, null);
+                                        }}>← Change Answers</button>
                                     </div>
                                 ) : (
                                     <div className="confirm-actions">
                                         <button className="confirm-btn" onClick={onComplete}>Back to Dashboard</button>
-                                        <button className="text-btn" onClick={() => handleAnswer('q8', null)}>← Change Answers</button>
+                                        <button className="text-btn" onClick={() => {
+                                            const lastKey = dbQuestions.length > 0 ? dbQuestions[dbQuestions.length - 1].key : 'q8';
+                                            handleAnswer(lastKey, null);
+                                        }}>← Change Answers</button>
                                     </div>
                                 )}
                             </div>

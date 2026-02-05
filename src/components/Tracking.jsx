@@ -10,6 +10,18 @@ const Tracking = () => {
     const [search, setSearch] = useState('');
     const [selectedClient, setSelectedClient] = useState(null);
     const [statusFilter, setStatusFilter] = useState('all');
+    const [dbQuestions, setDbQuestions] = useState([]);
+
+    useEffect(() => {
+        const fetchQuestions = async () => {
+            const { data } = await supabase
+                .from('personal_questions')
+                .select('*')
+                .order('sort_order', { ascending: true });
+            if (data) setDbQuestions(data);
+        };
+        fetchQuestions();
+    }, []);
 
     useEffect(() => {
         fetchClients();
@@ -97,30 +109,39 @@ const Tracking = () => {
         const scores = {};
         ALL_BANKS.forEach(bank => scores[bank] = 0);
 
-        const rules = [
-            { id: 'q3', yes: ALL_BANKS, no: ["INCRED/FINABLE"] },
-            { id: 'q4', yes: ["ICICI BANK", "IDFC BANK", "YES BANK", "HDFC BANK", "AXIS BANK", "AXIS FINANCE", "ADITYA BIRLA"], no: ["PRIMAL", "CHOLA", "SRIRAM", "TATA CAPITAL", "BAJAJ", "POONAWALA", "INCRED/FINABLE", "SMFG", "UTKARSH"] },
-            { id: 'q5', yes: ["ICICI BANK", "HDFC BANK", "BAJAJ", "POONAWALA", "SRIRAM", "YES BANK", "AXIS BANK"], no: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "INCRED/FINABLE", "SMFG", "AXIS FINANCE", "IDFC BANK", "YES BANK"] },
-            { id: 'q6', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"], no: ["INCRED/FINABLE", "SMFG", "SRIRAM", "POONAWALA", "AXIS FINANCE"] },
-            { id: 'q7', yes: ["PRIMAL", "CHOLA", "ADITYA BIRLA", "TATA CAPITAL", "BAJAJ", "IDFC BANK", "UTKARSH", "POONAWALA", "SMFG", "AXIS FINANCE"], no: ["INCRED/FINABLE", "ICICI BANK", "YES BANK", "HDFC BANK", "AXIS BANK"] }
-        ];
+        const ruleSources = dbQuestions.length > 0 ? dbQuestions : [];
+        let ruleCount = 0;
 
-        if (currentAnswers.q8 === 'Yes') {
-            return { banks: [], probable: [], reasons: [{ q: "Recent Cheque Bounce (Last 6 Months)", lost: ALL_BANKS }] };
-        }
+        ruleSources.forEach(rule => {
+            const ans = currentAnswers[rule.key];
+            if (ans !== null && ans !== undefined) {
+                // Skip formality questions (q1, q2)
+                if (rule.key === 'q1' || rule.key === 'q2') return;
 
-        const reasons = [];
-        ALL_BANKS.forEach(bank => {
-            rules.forEach(rule => {
-                const targetList = currentAnswers[rule.id] === 'Yes'
-                    ? [...new Set([...rule.yes, ...rule.no])]
-                    : rule.no;
-                if (targetList.includes(bank)) scores[bank] += 1;
-            });
+                ruleCount++;
+                const eligibleBanks = ans === 'Yes' ? (rule.yes_eligible_banks || []) : (rule.no_eligible_banks || []);
+                ALL_BANKS.forEach(bank => {
+                    if (eligibleBanks.includes(bank)) scores[bank]++;
+                });
+            }
         });
 
-        const strictBanks = ALL_BANKS.filter(bank => scores[bank] === rules.length);
-        const probableBanks = ALL_BANKS.filter(bank => scores[bank] === rules.length - 1 && !strictBanks.includes(bank));
+        if (ruleCount === 0) return { banks: ALL_BANKS, probable: [], reasons: [] };
+
+        const strictBanks = ALL_BANKS.filter(bank => scores[bank] === ruleCount);
+        const probableBanks = ALL_BANKS.filter(bank => scores[bank] === ruleCount - 1 && ruleCount > 1 && !strictBanks.includes(bank));
+
+        const reasons = [];
+        if (strictBanks.length === 0) {
+            ruleSources.forEach(rule => {
+                if (currentAnswers[rule.key] !== null && currentAnswers[rule.key] !== undefined) {
+                    const eligible = currentAnswers[rule.key] === 'Yes' ? (rule.yes_eligible_banks || []) : (rule.no_eligible_banks || []);
+                    const rejected = ALL_BANKS.filter(b => !eligible.includes(b));
+                    if (rejected.length > 0) reasons.push({ q: rule.label || rule.key, lost: rejected });
+                }
+            });
+        }
+
         return { banks: strictBanks, probable: probableBanks, reasons };
     };
 
@@ -167,16 +188,19 @@ const Tracking = () => {
         const qs = typeof client.questions === 'string' ? JSON.parse(client.questions) : client.questions;
         if (!qs) return null;
 
-        const questionLabels = {
-            q1: "Gold Loan Status",
-            q2: "Credit Connectivity",
-            q3: "Pay-slip Verification",
-            q4: "Bureau Standing (>700)",
-            q5: "Income Threshold (>25k)",
-            q6: "Statutory Deductions",
-            q7: "Address Verification",
-            q8: "Instrument Clearance (6m)"
-        };
+        const questionLabels = dbQuestions.length > 0
+            ? Object.fromEntries(dbQuestions.map(q => [q.key, q.label]))
+            : {
+                q1: "Gold Loan Status",
+                q2: "Credit Connectivity",
+                q3: "Pay-slip Verification",
+                q4: "Bureau Standing (>700)",
+                q5: "Income Threshold (>25k)",
+                q6: "Statutory Deductions",
+                q7: "Address Verification",
+                q8: "Instrument Clearance (6m)",
+                Q9: "Company List"
+            };
 
         const statuses = [
             { id: 'follow_up', label: 'Follow Up' },
@@ -304,16 +328,18 @@ const Tracking = () => {
                                 <label>Eligibility Diagnostics</label>
                                 <div className="diagnostic-grid">
                                     {Object.entries(questionLabels).map(([key, label]) => (
-                                        <div
-                                            key={key}
-                                            className="diag-item interactive"
-                                            onClick={() => handleAnswerUpdate(client, key, qs[key] === 'Yes' ? 'No' : 'Yes')}
-                                        >
-                                            <span className="d-label">{label}</span>
-                                            <span className={`d-status ${qs[key] === 'Yes' ? 'pass' : 'fail'}`}>
-                                                {qs[key] === 'Yes' ? 'YES' : 'NO'}
-                                            </span>
-                                        </div>
+                                        qs[key] !== undefined && (
+                                            <div
+                                                key={key}
+                                                className="diag-item interactive"
+                                                onClick={() => handleAnswerUpdate(client, key, qs[key] === 'Yes' ? 'No' : 'Yes')}
+                                            >
+                                                <span className="d-label">{label}</span>
+                                                <span className={`d-status ${qs[key] === 'Yes' ? 'pass' : 'fail'}`}>
+                                                    {qs[key] === 'Yes' ? 'YES' : 'NO'}
+                                                </span>
+                                            </div>
+                                        )
                                     ))}
                                 </div>
                             </section>
