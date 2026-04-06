@@ -322,6 +322,29 @@ const AdminDashboard = ({ onLogout }) => {
         setShowClientModal(true);
     };
 
+    const handleUpdateClientStatus = async (clientId, newStatus) => {
+        try {
+            const { error } = await supabase
+                .from('client_logins')
+                .update({ status: newStatus })
+                .eq('id', clientId);
+
+            if (error) throw error;
+
+            setAllLogins(prev => prev.map(login =>
+                login.id === clientId ? { ...login, status: newStatus } : login
+            ));
+
+            if (selectedClient && selectedClient.id === clientId) {
+                setSelectedClient(prev => ({ ...prev, status: newStatus }));
+            }
+
+            fetchData();
+        } catch (error) {
+            alert('Failed to update status: ' + error.message);
+        }
+    };
+
     const handleOpenPolicy = (policy) => {
         setSelectedPolicy({ ...policy });
         setShowPolicyModal(true);
@@ -1838,8 +1861,19 @@ const AdminDashboard = ({ onLogout }) => {
                                         <span>₹{parseFloat(selectedClient.salary).toLocaleString()}</span>
                                     </div>
                                     <div className="f-stat">
-                                        <label>Final Status</label>
-                                        <span className={`status-pill filled ${selectedClient.status}`}>{selectedClient.status}</span>
+                                        <label>Final Status (Update)</label>
+                                        <div className="status-update-wrap">
+                                            <select
+                                                className={`status-select-minimal ${selectedClient.status}`}
+                                                value={selectedClient.status}
+                                                onChange={(e) => handleUpdateClientStatus(selectedClient.id, e.target.value)}
+                                            >
+                                                <option value="follow_up" style={{ background: '#0f172a', color: '#6366f1' }}>FOLLOW UP</option>
+                                                <option value="conversion" style={{ background: '#0f172a', color: '#f59e0b' }}>CONVERSION</option>
+                                                <option value="disbursed" style={{ background: '#0f172a', color: '#10b981' }}>DISBURSED</option>
+                                                <option value="rejected" style={{ background: '#0f172a', color: '#ef4444' }}>REJECTED</option>
+                                            </select>
+                                        </div>
                                     </div>
                                     <div className="f-stat">
                                         <label>Loginned By</label>
@@ -1922,6 +1956,30 @@ const AdminDashboard = ({ onLogout }) => {
                     --primary-glow: rgba(99, 102, 241, 0.2);
                     --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
                 }
+
+                .status-select-minimal {
+                    background: var(--input-bg);
+                    border: 1px solid var(--border);
+                    color: var(--text);
+                    padding: 6px 12px;
+                    border-radius: 8px;
+                    font-size: 0.75rem;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    cursor: pointer;
+                    outline: none;
+                    transition: 0.3s;
+                    font-family: inherit;
+                    letter-spacing: 0.05em;
+                }
+                .status-select-minimal:hover {
+                    border-color: var(--primary);
+                    background: rgba(255, 255, 255, 0.06);
+                }
+                .status-select-minimal.disbursed { color: #10b981; border-color: rgba(16, 185, 129, 0.3); }
+                .status-select-minimal.follow_up { color: #6366f1; border-color: rgba(99, 102, 241, 0.3); }
+                .status-select-minimal.rejected { color: #ef4444; border-color: rgba(239, 68, 68, 0.3); }
+                .status-select-minimal.conversion { color: #f59e0b; border-color: rgba(245, 158, 11, 0.3); }
 
                 .admin-container { 
                     display: flex; height: 100vh; width: 100vw; 
