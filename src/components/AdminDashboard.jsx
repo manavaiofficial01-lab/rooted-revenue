@@ -6,6 +6,77 @@ import IncentiveTracker from './IncentiveTracker';
 import { storage } from '../../firebase.config';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
+// Date helpers for Client Database filtering
+const formatLocalDate = (date) => {
+    if (!date) return '';
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const formatLocalMonth = (date) => {
+    if (!date) return '';
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+};
+
+const getWeekRangeFromDate = (dateInput) => {
+    if (!dateInput) return null;
+    const d = new Date(dateInput + (typeof dateInput === 'string' && !dateInput.includes('T') ? 'T12:00:00' : ''));
+    if (isNaN(d.getTime())) return null;
+    const day = d.getDay(); // 0 is Sun, 1 is Mon
+    const diffToMon = (day === 0 ? -6 : 1) - day;
+    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diffToMon, 0, 0, 0, 0);
+    const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diffToMon + 6, 23, 59, 59, 999);
+    return { start, end };
+};
+
+const getMonthRangeFromYM = (ymStr) => {
+    if (!ymStr) return null;
+    const [y, m] = ymStr.split('-').map(Number);
+    if (!y || !m) return null;
+    const start = new Date(y, m - 1, 1, 0, 0, 0, 0);
+    const end = new Date(y, m, 0, 23, 59, 59, 999);
+    return { start, end };
+};
+
+const getDayDisplay = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr + (typeof dateStr === 'string' && !dateStr.includes('T') ? 'T12:00:00' : ''));
+    if (isNaN(d.getTime())) return dateStr;
+    const todayStr = formatLocalDate(new Date());
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayStr = formatLocalDate(yesterdayDate);
+
+    const formatted = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    if (dateStr === todayStr) return `${formatted} · Today`;
+    if (dateStr === yesterdayStr) return `${formatted} · Yesterday`;
+    return formatted;
+};
+
+const getWeekDisplayRange = (dateStr) => {
+    const range = getWeekRangeFromDate(dateStr);
+    if (!range) return dateStr;
+    const s = range.start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const e = range.end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return `${s} – ${e}`;
+};
+
+const getMonthDisplay = (ymStr) => {
+    if (!ymStr) return '';
+    const [y, m] = ymStr.split('-').map(Number);
+    if (!y || !m) return ymStr;
+    const d = new Date(y, m - 1, 1);
+    return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+};
+
 const AdminDashboard = ({ onLogout }) => {
     const [questionMap, setQuestionMap] = useState({
         q1: "Gold Loan",
@@ -34,6 +105,15 @@ const AdminDashboard = ({ onLogout }) => {
     const [clientSearchQuery, setClientSearchQuery] = useState('');
     const [selectedClient, setSelectedClient] = useState(null);
     const [showClientModal, setShowClientModal] = useState(false);
+
+    // Client Database Filter States (Date & Phase)
+    const [clientDateFilterMode, setClientDateFilterMode] = useState('all'); // 'all', 'day', 'week', 'month', 'custom'
+    const [clientDayDate, setClientDayDate] = useState(() => formatLocalDate(new Date()));
+    const [clientWeekDate, setClientWeekDate] = useState(() => formatLocalDate(new Date()));
+    const [clientMonthDate, setClientMonthDate] = useState(() => formatLocalMonth(new Date()));
+    const [clientCustomStart, setClientCustomStart] = useState('');
+    const [clientCustomEnd, setClientCustomEnd] = useState('');
+    const [clientPhaseFilter, setClientPhaseFilter] = useState('all');
     const [showNotificationModal, setShowNotificationModal] = useState(false);
     const [notificationForm, setNotificationForm] = useState({ target: 'all', message: '', type: 'info' });
     const [sendingNotification, setSendingNotification] = useState(false);
@@ -344,6 +424,163 @@ const AdminDashboard = ({ onLogout }) => {
             alert('Failed to update status: ' + error.message);
         }
     };
+
+    // Client Database Date Filter Navigation Handlers
+    const latestLeadDate = allLogins.length > 0 && allLogins[0]?.created_at
+        ? formatLocalDate(new Date(allLogins[0].created_at))
+        : formatLocalDate(new Date());
+
+    const handlePrevDay = () => {
+        const d = new Date(clientDayDate + 'T12:00:00');
+        d.setDate(d.getDate() - 1);
+        setClientDayDate(formatLocalDate(d));
+    };
+
+    const handleNextDay = () => {
+        const d = new Date(clientDayDate + 'T12:00:00');
+        d.setDate(d.getDate() + 1);
+        setClientDayDate(formatLocalDate(d));
+    };
+
+    const handleTodayDay = () => {
+        setClientDayDate(formatLocalDate(new Date()));
+    };
+
+    const handleYesterdayDay = () => {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        setClientDayDate(formatLocalDate(d));
+    };
+
+    const handlePrevWeek = () => {
+        const d = new Date(clientWeekDate + 'T12:00:00');
+        d.setDate(d.getDate() - 7);
+        setClientWeekDate(formatLocalDate(d));
+    };
+
+    const handleNextWeek = () => {
+        const d = new Date(clientWeekDate + 'T12:00:00');
+        d.setDate(d.getDate() + 7);
+        setClientWeekDate(formatLocalDate(d));
+    };
+
+    const handleThisWeek = () => {
+        setClientWeekDate(formatLocalDate(new Date()));
+    };
+
+    const handleLastWeek = () => {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        setClientWeekDate(formatLocalDate(d));
+    };
+
+    const handlePrevMonth = () => {
+        const [y, m] = clientMonthDate.split('-').map(Number);
+        const d = new Date(y, m - 2, 1);
+        setClientMonthDate(formatLocalMonth(d));
+    };
+
+    const handleNextMonth = () => {
+        const [y, m] = clientMonthDate.split('-').map(Number);
+        const d = new Date(y, m, 1);
+        setClientMonthDate(formatLocalMonth(d));
+    };
+
+    const handleThisMonth = () => {
+        setClientMonthDate(formatLocalMonth(new Date()));
+    };
+
+    const handleLastMonth = () => {
+        const now = new Date();
+        const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        setClientMonthDate(formatLocalMonth(d));
+    };
+
+    const handleCustomPreset = (days) => {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - (days - 1));
+        setClientCustomStart(formatLocalDate(start));
+        setClientCustomEnd(formatLocalDate(end));
+    };
+
+    const handleCustomThisMonth = () => {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        setClientCustomStart(formatLocalDate(start));
+        setClientCustomEnd(formatLocalDate(now));
+    };
+
+    const resetClientFilters = () => {
+        setClientDateFilterMode('all');
+        setClientSearchQuery('');
+        setClientPhaseFilter('all');
+        setClientCustomStart('');
+        setClientCustomEnd('');
+        setClientDayDate(formatLocalDate(new Date()));
+        setClientWeekDate(formatLocalDate(new Date()));
+        setClientMonthDate(formatLocalMonth(new Date()));
+    };
+
+    // Filter computation
+    const dateMatchedClients = allLogins.filter(client => {
+        if (clientDateFilterMode === 'all') return true;
+        if (!client.created_at) return false;
+        const clientDate = new Date(client.created_at);
+        if (isNaN(clientDate.getTime())) return false;
+
+        if (clientDateFilterMode === 'day') {
+            return formatLocalDate(clientDate) === clientDayDate;
+        }
+
+        if (clientDateFilterMode === 'week') {
+            const range = getWeekRangeFromDate(clientWeekDate);
+            return range ? (clientDate >= range.start && clientDate <= range.end) : true;
+        }
+
+        if (clientDateFilterMode === 'month') {
+            const range = getMonthRangeFromYM(clientMonthDate);
+            return range ? (clientDate >= range.start && clientDate <= range.end) : true;
+        }
+
+        if (clientDateFilterMode === 'custom') {
+            if (clientCustomStart && clientDate < new Date(clientCustomStart + 'T00:00:00')) return false;
+            if (clientCustomEnd && clientDate > new Date(clientCustomEnd + 'T23:59:59.999')) return false;
+            return true;
+        }
+
+        return true;
+    });
+
+    const phaseCounts = {
+        all: dateMatchedClients.length,
+        disbursed: dateMatchedClients.filter(c => c.status === 'disbursed').length,
+        follow_up: dateMatchedClients.filter(c => c.status === 'follow_up').length,
+        rejected: dateMatchedClients.filter(c => c.status === 'rejected').length,
+        conversion: dateMatchedClients.filter(c => c.status === 'conversion').length
+    };
+
+    const filteredClients = dateMatchedClients.filter(client => {
+        if (clientSearchQuery.trim()) {
+            const q = clientSearchQuery.toLowerCase().trim();
+            const name = (client.client_name || '').toLowerCase();
+            const agent = (client.loginned_by || '').toLowerCase();
+            const loan = (client.loan_type || '').toLowerCase();
+            const mobile = (client.client_mobile || '').toLowerCase();
+            const status = (client.status || '').toLowerCase();
+            if (!name.includes(q) && !agent.includes(q) && !loan.includes(q) && !mobile.includes(q) && !status.includes(q)) {
+                return false;
+            }
+        }
+
+        if (clientPhaseFilter !== 'all') {
+            if ((client.status || '').toLowerCase() !== clientPhaseFilter.toLowerCase()) {
+                return false;
+            }
+        }
+
+        return true;
+    });
 
     const handleOpenPolicy = (policy) => {
         setSelectedPolicy({ ...policy });
@@ -1053,6 +1290,357 @@ const AdminDashboard = ({ onLogout }) => {
                             </div>
                         </header>
 
+                        {/* Interactive Calendar & Date Range Filter Panel */}
+                        <div className="client-filter-panel">
+                            {/* Top row: Mode selector tabs & results count */}
+                            <div className="client-filter-top-row">
+                                <div className="date-mode-pills">
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${clientDateFilterMode === 'all' ? 'active' : ''}`}
+                                        onClick={() => setClientDateFilterMode('all')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                                        All Time
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${clientDateFilterMode === 'day' ? 'active' : ''}`}
+                                        onClick={() => setClientDateFilterMode('day')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                                        Day by Day
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${clientDateFilterMode === 'week' ? 'active' : ''}`}
+                                        onClick={() => setClientDateFilterMode('week')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01" /></svg>
+                                        Week by Week
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${clientDateFilterMode === 'month' ? 'active' : ''}`}
+                                        onClick={() => setClientDateFilterMode('month')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M7 14h10M7 18h6" /></svg>
+                                        Month by Month
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${clientDateFilterMode === 'custom' ? 'active' : ''}`}
+                                        onClick={() => setClientDateFilterMode('custom')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><line x1="10" y1="14" x2="14" y2="18"></line><line x1="14" y1="14" x2="10" y2="18"></line></svg>
+                                        Custom Range
+                                    </button>
+                                </div>
+
+                                <div className="filter-actions-right">
+                                    <span className="filter-count-badge">
+                                        Showing <strong>{filteredClients.length}</strong> of {allLogins.length} Leads
+                                    </span>
+                                    {(clientDateFilterMode !== 'all' || clientPhaseFilter !== 'all' || clientSearchQuery) && (
+                                        <button
+                                            type="button"
+                                            className="reset-filter-btn"
+                                            onClick={resetClientFilters}
+                                            title="Reset all filters"
+                                        >
+                                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
+                                            Reset Filters
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Secondary Row: Specific Calendar & Navigation Controls */}
+                            {clientDateFilterMode === 'day' && (
+                                <div className="client-filter-controls animate-fade">
+                                    <div className="nav-date-group">
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handlePrevDay}
+                                            title="Previous Day"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+                                        </button>
+
+                                        <div className="date-picker-styled-wrap" title="Pick date from calendar">
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                                            <input
+                                                type="date"
+                                                value={clientDayDate}
+                                                onChange={(e) => setClientDayDate(e.target.value)}
+                                            />
+                                        </div>
+
+                                        <span className="current-date-badge">
+                                            {getDayDisplay(clientDayDate)}
+                                        </span>
+
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handleNextDay}
+                                            title="Next Day"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+                                        </button>
+                                    </div>
+
+                                    <div className="quick-jump-chips">
+                                        <button
+                                            type="button"
+                                            className={`jump-chip ${clientDayDate === formatLocalDate(new Date()) ? 'active' : ''}`}
+                                            onClick={handleTodayDay}
+                                        >
+                                            Today
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className={`jump-chip ${clientDayDate === formatLocalDate(new Date(Date.now() - 86400000)) ? 'active' : ''}`}
+                                            onClick={handleYesterdayDay}
+                                        >
+                                            Yesterday
+                                        </button>
+                                        {latestLeadDate && latestLeadDate !== formatLocalDate(new Date()) && latestLeadDate !== formatLocalDate(new Date(Date.now() - 86400000)) && (
+                                            <button
+                                                type="button"
+                                                className={`jump-chip ${clientDayDate === latestLeadDate ? 'active' : ''}`}
+                                                onClick={() => setClientDayDate(latestLeadDate)}
+                                                title={`Jump to latest activity on ${latestLeadDate}`}
+                                            >
+                                                Latest Active ({new Date(latestLeadDate + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {clientDateFilterMode === 'week' && (
+                                <div className="client-filter-controls animate-fade">
+                                    <div className="nav-date-group">
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handlePrevWeek}
+                                            title="Previous Week"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+                                        </button>
+
+                                        <span className="current-date-badge">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                                            {getWeekDisplayRange(clientWeekDate)}
+                                        </span>
+
+                                        <div className="date-picker-styled-wrap" title="Jump to week containing date">
+                                            <input
+                                                type="date"
+                                                value={clientWeekDate}
+                                                onChange={(e) => setClientWeekDate(e.target.value)}
+                                            />
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handleNextWeek}
+                                            title="Next Week"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+                                        </button>
+                                    </div>
+
+                                    <div className="quick-jump-chips">
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={handleThisWeek}
+                                        >
+                                            This Week
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={handleLastWeek}
+                                        >
+                                            Last Week
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {clientDateFilterMode === 'month' && (
+                                <div className="client-filter-controls animate-fade">
+                                    <div className="nav-date-group">
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handlePrevMonth}
+                                            title="Previous Month"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+                                        </button>
+
+                                        <span className="current-date-badge">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                                            {getMonthDisplay(clientMonthDate)}
+                                        </span>
+
+                                        <div className="date-picker-styled-wrap" title="Select specific month">
+                                            <input
+                                                type="month"
+                                                value={clientMonthDate}
+                                                onChange={(e) => setClientMonthDate(e.target.value)}
+                                            />
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handleNextMonth}
+                                            title="Next Month"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+                                        </button>
+                                    </div>
+
+                                    <div className="quick-jump-chips">
+                                        <button
+                                            type="button"
+                                            className={`jump-chip ${clientMonthDate === formatLocalMonth(new Date()) ? 'active' : ''}`}
+                                            onClick={handleThisMonth}
+                                        >
+                                            This Month
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={handleLastMonth}
+                                        >
+                                            Last Month
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {clientDateFilterMode === 'custom' && (
+                                <div className="client-filter-controls animate-fade">
+                                    <div className="custom-range-inputs">
+                                        <div className="custom-date-field" title="Start Date">
+                                            <label>From</label>
+                                            <input
+                                                type="date"
+                                                value={clientCustomStart}
+                                                onChange={(e) => setClientCustomStart(e.target.value)}
+                                            />
+                                        </div>
+                                        <span className="range-arrow">→</span>
+                                        <div className="custom-date-field" title="End Date">
+                                            <label>To</label>
+                                            <input
+                                                type="date"
+                                                value={clientCustomEnd}
+                                                onChange={(e) => setClientCustomEnd(e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="quick-jump-chips">
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={() => handleCustomPreset(7)}
+                                        >
+                                            Last 7 Days
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={() => handleCustomPreset(14)}
+                                        >
+                                            Last 14 Days
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={() => handleCustomPreset(30)}
+                                        >
+                                            Last 30 Days
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={handleCustomThisMonth}
+                                        >
+                                            This Month
+                                        </button>
+                                        {(clientCustomStart || clientCustomEnd) && (
+                                            <button
+                                                type="button"
+                                                className="jump-chip"
+                                                onClick={() => { setClientCustomStart(''); setClientCustomEnd(''); }}
+                                                style={{ color: '#ef4444' }}
+                                            >
+                                                ✕ Clear Range
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Phase filter pills row */}
+                            <div className="client-filter-phase-row">
+                                <div className="phase-chips-group">
+                                    <button
+                                        type="button"
+                                        className={`phase-filter-chip ${clientPhaseFilter === 'all' ? 'active' : ''}`}
+                                        onClick={() => setClientPhaseFilter('all')}
+                                    >
+                                        All Phases ({phaseCounts.all})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`phase-filter-chip ${clientPhaseFilter === 'follow_up' ? 'active' : ''}`}
+                                        onClick={() => setClientPhaseFilter('follow_up')}
+                                    >
+                                        <span className="phase-dot follow_up"></span>
+                                        Follow Up ({phaseCounts.follow_up})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`phase-filter-chip ${clientPhaseFilter === 'disbursed' ? 'active' : ''}`}
+                                        onClick={() => setClientPhaseFilter('disbursed')}
+                                    >
+                                        <span className="phase-dot disbursed"></span>
+                                        Disbursed ({phaseCounts.disbursed})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`phase-filter-chip ${clientPhaseFilter === 'rejected' ? 'active' : ''}`}
+                                        onClick={() => setClientPhaseFilter('rejected')}
+                                    >
+                                        <span className="phase-dot rejected"></span>
+                                        Rejected ({phaseCounts.rejected})
+                                    </button>
+                                    {phaseCounts.conversion > 0 && (
+                                        <button
+                                            type="button"
+                                            className={`phase-filter-chip ${clientPhaseFilter === 'conversion' ? 'active' : ''}`}
+                                            onClick={() => setClientPhaseFilter('conversion')}
+                                        >
+                                            <span className="phase-dot conversion"></span>
+                                            Conversion ({phaseCounts.conversion})
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
                         <div className="client-master-list">
                             <div className="client-list-header">
                                 <span className="col-client">Recipient</span>
@@ -1061,49 +1649,67 @@ const AdminDashboard = ({ onLogout }) => {
                                 <span className="col-status align-right">Current Phase</span>
                             </div>
                             <div className="client-rows">
-                                {allLogins
-                                    .filter(c => c.client_name?.toLowerCase().includes(clientSearchQuery.toLowerCase()))
-                                    .map(client => {
-                                        const cqs = typeof client.questions === 'string' ? JSON.parse(client.questions) : (client.questions || {});
-                                        return (
-                                            <div key={client.id} className="client-item-row">
-                                                <div className="c-info-wrap col-client pointer" onClick={() => handleOpenClientAudit(client)}>
-                                                    <div className="c-avatar-mini">{client.client_name?.charAt(0) || 'A'}</div>
-                                                    <div className="c-info">
-                                                        <span className="c-name">{client.client_name || 'Anonymous'}</span>
-                                                        <span className="c-sub">Portal Entry: {new Date(client.created_at).toLocaleDateString()}</span>
-                                                    </div>
+                                {filteredClients.map(client => {
+                                    const cqs = typeof client.questions === 'string' ? JSON.parse(client.questions) : (client.questions || {});
+                                    return (
+                                        <div key={client.id} className="client-item-row">
+                                            <div className="c-info-wrap col-client pointer" onClick={() => handleOpenClientAudit(client)}>
+                                                <div className="c-avatar-mini">{client.client_name?.charAt(0) || 'A'}</div>
+                                                <div className="c-info">
+                                                    <span className="c-name">{client.client_name || 'Anonymous'}</span>
+                                                    <span className="c-sub">Portal Entry: {new Date(client.created_at).toLocaleDateString()}</span>
                                                 </div>
+                                            </div>
 
-                                                <div className="c-agent col-agent">
-                                                    <div className="c-agent-pill">
-                                                        <div className="a-dot"></div>
-                                                        <span>{client.loginned_by}</span>
-                                                    </div>
+                                            <div className="c-agent col-agent">
+                                                <div className="c-agent-pill">
+                                                    <div className="a-dot"></div>
+                                                    <span>{client.loginned_by}</span>
                                                 </div>
+                                            </div>
 
-                                                <div className="c-type col-loan">
-                                                    <div className="loan-brief">
-                                                        <span className="c-val">{client.loan_type?.replace('_', ' ')}</span>
-                                                        <div className="match-pills">
-                                                            {cqs.results?.length > 0 && <span className="match-tag result">{cqs.results.length} Match</span>}
-                                                            {cqs.probable?.length > 0 && <span className="match-tag probable">{cqs.probable.length} Probable</span>}
-                                                            {(!cqs.results?.length && !cqs.probable?.length) && <span className="match-tag none">No Match</span>}
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                <div className="c-status col-status">
-                                                    <div className="status-container">
-                                                        <span className={`status-pill filled ${client.status}`}>{client.status}</span>
-                                                        <button className="row-action-btn" onClick={() => handleOpenClientAudit(client)}>
-                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14m-7-7 7 7-7 7" /></svg>
-                                                        </button>
+                                            <div className="c-type col-loan">
+                                                <div className="loan-brief">
+                                                    <span className="c-val">{client.loan_type?.replace('_', ' ')}</span>
+                                                    <div className="match-pills">
+                                                        {cqs.results?.length > 0 && <span className="match-tag result">{cqs.results.length} Match</span>}
+                                                        {cqs.probable?.length > 0 && <span className="match-tag probable">{cqs.probable.length} Probable</span>}
+                                                        {(!cqs.results?.length && !cqs.probable?.length) && <span className="match-tag none">No Match</span>}
                                                     </div>
                                                 </div>
                                             </div>
-                                        );
-                                    })}
+
+                                            <div className="c-status col-status">
+                                                <div className="status-container">
+                                                    <span className={`status-pill filled ${client.status}`}>{client.status}</span>
+                                                    <button className="row-action-btn" onClick={() => handleOpenClientAudit(client)}>
+                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14m-7-7 7 7-7 7" /></svg>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+
+                                {filteredClients.length === 0 && (
+                                    <div className="client-empty-state">
+                                        <div className="empty-icon-wrap">
+                                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                                <line x1="16" y1="2" x2="16" y2="6"></line>
+                                                <line x1="8" y1="2" x2="8" y2="6"></line>
+                                                <line x1="3" y1="10" x2="21" y2="10"></line>
+                                                <line x1="10" y1="14" x2="14" y2="18"></line>
+                                                <line x1="14" y1="14" x2="10" y2="18"></line>
+                                            </svg>
+                                        </div>
+                                        <h3>No Client Applications Found</h3>
+                                        <p>No records match your selected date period or filter settings.</p>
+                                        <button type="button" className="reset-filter-btn" onClick={resetClientFilters}>
+                                            Reset All Filters
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -2160,6 +2766,376 @@ const AdminDashboard = ({ onLogout }) => {
                 .status-pill.rejected { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
                 .status-pill.follow_up { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
                 .act-date { font-size: 0.75rem; color: var(--text-muted); text-align: right; }
+
+                /* Client Filter Panel Styles */
+                .client-filter-panel {
+                    background: var(--card-bg);
+                    border: 1px solid var(--border);
+                    border-radius: 24px;
+                    padding: 1.25rem 1.75rem;
+                    margin-bottom: 1.5rem;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 1rem;
+                    box-shadow: var(--shadow);
+                    backdrop-filter: blur(10px);
+                }
+
+                .client-filter-top-row {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    flex-wrap: wrap;
+                    gap: 1rem;
+                }
+
+                .date-mode-pills {
+                    display: inline-flex;
+                    background: var(--input-bg);
+                    padding: 4px;
+                    border-radius: 16px;
+                    border: 1px solid var(--border);
+                    gap: 4px;
+                    flex-wrap: wrap;
+                }
+
+                .date-mode-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 8px 16px;
+                    border-radius: 12px;
+                    border: none;
+                    background: transparent;
+                    color: var(--text-muted);
+                    font-size: 0.82rem;
+                    font-weight: 500;
+                    font-family: 'Outfit', sans-serif;
+                    cursor: pointer;
+                    transition: all 0.25s ease;
+                }
+
+                .date-mode-pill:hover {
+                    color: var(--text);
+                    background: rgba(255, 255, 255, 0.04);
+                }
+
+                .date-mode-pill.active {
+                    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+                    color: #ffffff;
+                    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+                }
+
+                .filter-actions-right {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+
+                .filter-count-badge {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    background: rgba(99, 102, 241, 0.08);
+                    border: 1px solid rgba(99, 102, 241, 0.2);
+                    color: #818cf8;
+                    padding: 6px 14px;
+                    border-radius: 100px;
+                    font-size: 0.78rem;
+                    font-weight: 500;
+                }
+
+                .filter-count-badge strong {
+                    font-weight: 700;
+                    color: var(--text);
+                }
+
+                .reset-filter-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 6px 14px;
+                    border-radius: 10px;
+                    border: 1px solid var(--border);
+                    background: var(--input-bg);
+                    color: var(--text-muted);
+                    font-size: 0.78rem;
+                    font-family: 'Outfit', sans-serif;
+                    cursor: pointer;
+                    transition: 0.2s;
+                }
+
+                .reset-filter-btn:hover {
+                    color: #ef4444;
+                    border-color: rgba(239, 68, 68, 0.3);
+                    background: rgba(239, 68, 68, 0.06);
+                }
+
+                /* Secondary controls row for Day/Week/Month/Custom */
+                .client-filter-controls {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    flex-wrap: wrap;
+                    gap: 1rem;
+                    padding-top: 0.85rem;
+                    border-top: 1px solid var(--border);
+                }
+
+                .nav-date-group {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                }
+
+                .nav-arrow-btn {
+                    width: 34px;
+                    height: 34px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: var(--input-bg);
+                    border: 1px solid var(--border);
+                    color: var(--text);
+                    border-radius: 10px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+
+                .nav-arrow-btn:hover {
+                    border-color: var(--primary);
+                    color: var(--primary);
+                    background: rgba(99, 102, 241, 0.08);
+                    transform: scale(1.05);
+                }
+
+                .date-picker-styled-wrap {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    background: var(--input-bg);
+                    border: 1px solid var(--border);
+                    border-radius: 12px;
+                    padding: 6px 12px;
+                    transition: border-color 0.2s;
+                }
+
+                .date-picker-styled-wrap:focus-within {
+                    border-color: var(--primary);
+                    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+                }
+
+                .date-picker-styled-wrap input[type="date"],
+                .date-picker-styled-wrap input[type="month"] {
+                    background: transparent;
+                    border: none;
+                    color: var(--text);
+                    font-family: 'Outfit', sans-serif;
+                    font-size: 0.85rem;
+                    outline: none;
+                    cursor: pointer;
+                }
+
+                .current-date-badge {
+                    font-size: 0.85rem;
+                    font-weight: 500;
+                    color: var(--text);
+                    background: rgba(255, 255, 255, 0.03);
+                    padding: 6px 14px;
+                    border-radius: 10px;
+                    border: 1px solid var(--border);
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .quick-jump-chips {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    flex-wrap: wrap;
+                }
+
+                .jump-chip {
+                    background: var(--input-bg);
+                    border: 1px solid var(--border);
+                    color: var(--text-muted);
+                    font-size: 0.75rem;
+                    padding: 5px 12px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    font-family: 'Outfit', sans-serif;
+                    transition: 0.2s;
+                }
+
+                .jump-chip:hover {
+                    color: var(--primary);
+                    border-color: rgba(99, 102, 241, 0.3);
+                    background: rgba(99, 102, 241, 0.06);
+                }
+
+                .jump-chip.active {
+                    background: rgba(99, 102, 241, 0.15);
+                    border-color: var(--primary);
+                    color: #818cf8;
+                    font-weight: 600;
+                }
+
+                /* Custom range styles */
+                .custom-range-inputs {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                }
+
+                .custom-date-field {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    background: var(--input-bg);
+                    border: 1px solid var(--border);
+                    border-radius: 12px;
+                    padding: 6px 12px;
+                }
+
+                .custom-date-field label {
+                    font-size: 0.7rem;
+                    color: var(--text-muted);
+                    text-transform: uppercase;
+                    font-weight: 600;
+                }
+
+                .custom-date-field input[type="date"] {
+                    background: transparent;
+                    border: none;
+                    color: var(--text);
+                    font-family: 'Outfit', sans-serif;
+                    font-size: 0.85rem;
+                    outline: none;
+                    cursor: pointer;
+                }
+
+                .range-arrow {
+                    color: var(--text-muted);
+                    font-size: 0.9rem;
+                }
+
+                /* Status / Phase filters row */
+                .client-filter-phase-row {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    flex-wrap: wrap;
+                    gap: 10px;
+                    padding-top: 0.75rem;
+                    border-top: 1px dashed var(--border);
+                }
+
+                .phase-chips-group {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                }
+
+                .phase-filter-chip {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 5px 12px;
+                    border-radius: 8px;
+                    border: 1px solid var(--border);
+                    background: var(--input-bg);
+                    color: var(--text-muted);
+                    font-size: 0.75rem;
+                    font-family: 'Outfit', sans-serif;
+                    cursor: pointer;
+                    transition: 0.2s;
+                }
+
+                .phase-filter-chip:hover {
+                    color: var(--text);
+                    border-color: var(--border-light);
+                }
+
+                .phase-filter-chip.active {
+                    border-color: var(--primary);
+                    background: rgba(99, 102, 241, 0.12);
+                    color: #818cf8;
+                    font-weight: 600;
+                }
+
+                .phase-filter-chip .phase-dot {
+                    width: 6px;
+                    height: 6px;
+                    border-radius: 50%;
+                }
+                .phase-filter-chip .phase-dot.disbursed { background: #10b981; }
+                .phase-filter-chip .phase-dot.follow_up { background: #6366f1; }
+                .phase-filter-chip .phase-dot.rejected { background: #ef4444; }
+                .phase-filter-chip .phase-dot.conversion { background: #f59e0b; }
+
+                /* Empty state for filtered clients */
+                .client-empty-state {
+                    padding: 4rem 2rem;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    gap: 12px;
+                }
+
+                .empty-icon-wrap {
+                    width: 60px;
+                    height: 60px;
+                    border-radius: 18px;
+                    background: rgba(99, 102, 241, 0.08);
+                    border: 1px solid rgba(99, 102, 241, 0.2);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: #818cf8;
+                    margin-bottom: 6px;
+                }
+
+                .client-empty-state h3 {
+                    font-size: 1.1rem;
+                    font-weight: 500;
+                    color: var(--text);
+                    margin: 0;
+                }
+
+                .client-empty-state p {
+                    font-size: 0.85rem;
+                    color: var(--text-muted);
+                    max-width: 380px;
+                    margin: 0;
+                    line-height: 1.5;
+                }
+
+                /* Color scheme for native date pickers */
+                .admin-container.theme-dark input[type="date"],
+                .admin-container.theme-dark input[type="month"] {
+                    color-scheme: dark;
+                }
+                .admin-container.theme-light input[type="date"],
+                .admin-container.theme-light input[type="month"] {
+                    color-scheme: light;
+                }
+
+                @media (max-width: 768px) {
+                    .client-filter-panel { padding: 1rem; border-radius: 18px; }
+                    .client-filter-top-row { flex-direction: column; align-items: stretch; }
+                    .date-mode-pills { width: 100%; justify-content: space-between; }
+                    .date-mode-pill { flex: 1; text-align: center; justify-content: center; padding: 7px 10px; font-size: 0.75rem; }
+                    .filter-actions-right { justify-content: space-between; width: 100%; }
+                    .client-filter-controls { flex-direction: column; align-items: stretch; }
+                    .nav-date-group { width: 100%; justify-content: space-between; }
+                    .quick-jump-chips { width: 100%; justify-content: center; }
+                }
 
                 .client-master-list { background: var(--card-bg); border: 1px solid var(--border); border-radius: 28px; overflow: hidden; box-shadow: var(--shadow); }
                 .client-list-header { 
