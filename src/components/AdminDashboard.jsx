@@ -114,6 +114,14 @@ const AdminDashboard = ({ onLogout }) => {
     const [clientCustomStart, setClientCustomStart] = useState('');
     const [clientCustomEnd, setClientCustomEnd] = useState('');
     const [clientPhaseFilter, setClientPhaseFilter] = useState('all');
+
+    // Executive Dashboard Filter States (Date)
+    const [execDateFilterMode, setExecDateFilterMode] = useState('all'); // 'all', 'month', 'custom', 'day', 'week'
+    const [execDayDate, setExecDayDate] = useState(() => formatLocalDate(new Date()));
+    const [execWeekDate, setExecWeekDate] = useState(() => formatLocalDate(new Date()));
+    const [execMonthDate, setExecMonthDate] = useState(() => formatLocalMonth(new Date()));
+    const [execCustomStart, setExecCustomStart] = useState('');
+    const [execCustomEnd, setExecCustomEnd] = useState('');
     const [showNotificationModal, setShowNotificationModal] = useState(false);
     const [notificationForm, setNotificationForm] = useState({ target: 'all', message: '', type: 'info' });
     const [sendingNotification, setSendingNotification] = useState(false);
@@ -522,6 +530,153 @@ const AdminDashboard = ({ onLogout }) => {
         setClientMonthDate(formatLocalMonth(new Date()));
     };
 
+    // Executive Dashboard Date Filter Navigation Handlers
+    const handleExecPrevDay = () => {
+        const d = new Date(execDayDate + 'T12:00:00');
+        d.setDate(d.getDate() - 1);
+        setExecDayDate(formatLocalDate(d));
+    };
+
+    const handleExecNextDay = () => {
+        const d = new Date(execDayDate + 'T12:00:00');
+        d.setDate(d.getDate() + 1);
+        setExecDayDate(formatLocalDate(d));
+    };
+
+    const handleExecTodayDay = () => {
+        setExecDayDate(formatLocalDate(new Date()));
+    };
+
+    const handleExecYesterdayDay = () => {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        setExecDayDate(formatLocalDate(d));
+    };
+
+    const handleExecPrevWeek = () => {
+        const d = new Date(execWeekDate + 'T12:00:00');
+        d.setDate(d.getDate() - 7);
+        setExecWeekDate(formatLocalDate(d));
+    };
+
+    const handleExecNextWeek = () => {
+        const d = new Date(execWeekDate + 'T12:00:00');
+        d.setDate(d.getDate() + 7);
+        setExecWeekDate(formatLocalDate(d));
+    };
+
+    const handleExecThisWeek = () => {
+        setExecWeekDate(formatLocalDate(new Date()));
+    };
+
+    const handleExecLastWeek = () => {
+        const d = new Date();
+        d.setDate(d.getDate() - 7);
+        setExecWeekDate(formatLocalDate(d));
+    };
+
+    const handleExecPrevMonth = () => {
+        const [y, m] = execMonthDate.split('-').map(Number);
+        const d = new Date(y, m - 2, 1);
+        setExecMonthDate(formatLocalMonth(d));
+    };
+
+    const handleExecNextMonth = () => {
+        const [y, m] = execMonthDate.split('-').map(Number);
+        const d = new Date(y, m, 1);
+        setExecMonthDate(formatLocalMonth(d));
+    };
+
+    const handleExecThisMonth = () => {
+        setExecMonthDate(formatLocalMonth(new Date()));
+    };
+
+    const handleExecLastMonth = () => {
+        const now = new Date();
+        const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        setExecMonthDate(formatLocalMonth(d));
+    };
+
+    const handleExecCustomPreset = (days) => {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - (days - 1));
+        setExecCustomStart(formatLocalDate(start));
+        setExecCustomEnd(formatLocalDate(end));
+    };
+
+    const handleExecCustomThisMonth = () => {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        setExecCustomStart(formatLocalDate(start));
+        setExecCustomEnd(formatLocalDate(now));
+    };
+
+    const resetExecFilters = () => {
+        setExecDateFilterMode('all');
+        setExecCustomStart('');
+        setExecCustomEnd('');
+        setExecDayDate(formatLocalDate(new Date()));
+        setExecWeekDate(formatLocalDate(new Date()));
+        setExecMonthDate(formatLocalMonth(new Date()));
+    };
+
+    // Executive Dashboard Filtered Logins & Performance Computation
+    const dateMatchedExecLogins = allLogins.filter(lead => {
+        if (execDateFilterMode === 'all') return true;
+        if (!lead.created_at) return false;
+        const leadDate = new Date(lead.created_at);
+        if (isNaN(leadDate.getTime())) return false;
+
+        if (execDateFilterMode === 'day') {
+            return formatLocalDate(leadDate) === execDayDate;
+        }
+
+        if (execDateFilterMode === 'week') {
+            const range = getWeekRangeFromDate(execWeekDate);
+            return range ? (leadDate >= range.start && leadDate <= range.end) : true;
+        }
+
+        if (execDateFilterMode === 'month') {
+            const range = getMonthRangeFromYM(execMonthDate);
+            return range ? (leadDate >= range.start && leadDate <= range.end) : true;
+        }
+
+        if (execDateFilterMode === 'custom') {
+            if (execCustomStart && leadDate < new Date(execCustomStart + 'T00:00:00')) return false;
+            if (execCustomEnd && leadDate > new Date(execCustomEnd + 'T23:59:59.999')) return false;
+            return true;
+        }
+
+        return true;
+    });
+
+    const execPerformance = dateMatchedExecLogins.reduce((acc, lead) => {
+        const name = lead.loginned_by || 'Unknown';
+        if (!acc[name]) {
+            acc[name] = { disbursement: 0, leads: 0, disbursed: 0, follow_up: 0, rejected: 0 };
+        }
+        acc[name].leads += 1;
+        if (lead.status === 'disbursed') {
+            acc[name].disbursement += parseFloat(lead.eligibility || 0);
+            acc[name].disbursed += 1;
+        } else if (lead.status === 'follow_up') {
+            acc[name].follow_up += 1;
+        } else if (lead.status === 'rejected') {
+            acc[name].rejected += 1;
+        }
+        return acc;
+    }, {});
+
+    const execOfficeStats = dateMatchedExecLogins.reduce((acc, lead) => {
+        acc.totalLeads += 1;
+        if (lead.status === 'disbursed') {
+            acc.totalDisbursement += parseFloat(lead.eligibility || 0);
+            acc.totalDisbursedCount += 1;
+        }
+        return acc;
+    }, { totalDisbursement: 0, totalLeads: 0, totalDisbursedCount: 0 });
+
     // Filter computation
     const dateMatchedClients = allLogins.filter(client => {
         if (clientDateFilterMode === 'all') return true;
@@ -713,10 +868,15 @@ const AdminDashboard = ({ onLogout }) => {
 
     const periodStats = selectedEmployee ? getStatsByPeriod(empLogins) : null;
 
-    const filteredEmployees = employees.filter(emp =>
-        emp.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        emp.email?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filteredEmployees = employees
+        .filter(emp =>
+            emp.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            emp.email?.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        .map(emp => ({
+            ...emp,
+            stats: execPerformance[emp.username] || { disbursement: 0, leads: 0, disbursed: 0, follow_up: 0, rejected: 0 }
+        }));
 
     return (
         <div className={`admin-container theme-${theme}`}>
@@ -883,28 +1043,341 @@ const AdminDashboard = ({ onLogout }) => {
                             </div>
                         </header>
 
+                        {/* Interactive Calendar & Date Range Filter Panel for Executive Dashboard */}
+                        <div className="client-filter-panel">
+                            {/* Top row: Mode selector tabs & results count */}
+                            <div className="client-filter-top-row">
+                                <div className="date-mode-pills">
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${execDateFilterMode === 'all' ? 'active' : ''}`}
+                                        onClick={() => setExecDateFilterMode('all')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                                        All Time
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${execDateFilterMode === 'month' ? 'active' : ''}`}
+                                        onClick={() => setExecDateFilterMode('month')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M7 14h10M7 18h6" /></svg>
+                                        Month by Month
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${execDateFilterMode === 'custom' ? 'active' : ''}`}
+                                        onClick={() => setExecDateFilterMode('custom')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><line x1="10" y1="14" x2="14" y2="18"></line><line x1="14" y1="14" x2="10" y2="18"></line></svg>
+                                        Custom Range
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${execDateFilterMode === 'day' ? 'active' : ''}`}
+                                        onClick={() => setExecDateFilterMode('day')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                                        Day by Day
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`date-mode-pill ${execDateFilterMode === 'week' ? 'active' : ''}`}
+                                        onClick={() => setExecDateFilterMode('week')}
+                                    >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01" /></svg>
+                                        Week by Week
+                                    </button>
+                                </div>
+
+                                <div className="filter-actions-right">
+                                    <span className="filter-count-badge">
+                                        Filtering <strong>{dateMatchedExecLogins.length}</strong> of {allLogins.length} Leads
+                                    </span>
+                                    {execDateFilterMode !== 'all' && (
+                                        <button
+                                            type="button"
+                                            className="reset-filter-btn"
+                                            onClick={resetExecFilters}
+                                            title="Reset all filters"
+                                        >
+                                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
+                                            Reset Filters
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Secondary Row: Specific Calendar & Navigation Controls */}
+                            {execDateFilterMode === 'day' && (
+                                <div className="client-filter-controls animate-fade">
+                                    <div className="nav-date-group">
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handleExecPrevDay}
+                                            title="Previous Day"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+                                        </button>
+
+                                        <div className="date-picker-styled-wrap" title="Pick date from calendar">
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                                            <input
+                                                type="date"
+                                                value={execDayDate}
+                                                onChange={(e) => setExecDayDate(e.target.value)}
+                                            />
+                                        </div>
+
+                                        <span className="current-date-badge">
+                                            {getDayDisplay(execDayDate)}
+                                        </span>
+
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handleExecNextDay}
+                                            title="Next Day"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+                                        </button>
+                                    </div>
+
+                                    <div className="quick-jump-chips">
+                                        <button
+                                            type="button"
+                                            className={`jump-chip ${execDayDate === formatLocalDate(new Date()) ? 'active' : ''}`}
+                                            onClick={handleExecTodayDay}
+                                        >
+                                            Today
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className={`jump-chip ${execDayDate === formatLocalDate(new Date(Date.now() - 86400000)) ? 'active' : ''}`}
+                                            onClick={handleExecYesterdayDay}
+                                        >
+                                            Yesterday
+                                        </button>
+                                        {latestLeadDate && latestLeadDate !== formatLocalDate(new Date()) && latestLeadDate !== formatLocalDate(new Date(Date.now() - 86400000)) && (
+                                            <button
+                                                type="button"
+                                                className={`jump-chip ${execDayDate === latestLeadDate ? 'active' : ''}`}
+                                                onClick={() => setExecDayDate(latestLeadDate)}
+                                                title={`Jump to latest activity on ${latestLeadDate}`}
+                                            >
+                                                Latest Active ({new Date(latestLeadDate + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {execDateFilterMode === 'week' && (
+                                <div className="client-filter-controls animate-fade">
+                                    <div className="nav-date-group">
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handleExecPrevWeek}
+                                            title="Previous Week"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+                                        </button>
+
+                                        <span className="current-date-badge">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                                            {getWeekDisplayRange(execWeekDate)}
+                                        </span>
+
+                                        <div className="date-picker-styled-wrap" title="Jump to week containing date">
+                                            <input
+                                                type="date"
+                                                value={execWeekDate}
+                                                onChange={(e) => setExecWeekDate(e.target.value)}
+                                            />
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handleExecNextWeek}
+                                            title="Next Week"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+                                        </button>
+                                    </div>
+
+                                    <div className="quick-jump-chips">
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={handleExecThisWeek}
+                                        >
+                                            This Week
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={handleExecLastWeek}
+                                        >
+                                            Last Week
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {execDateFilterMode === 'month' && (
+                                <div className="client-filter-controls animate-fade">
+                                    <div className="nav-date-group">
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handleExecPrevMonth}
+                                            title="Previous Month"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+                                        </button>
+
+                                        <span className="current-date-badge">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                                            {getMonthDisplay(execMonthDate)}
+                                        </span>
+
+                                        <div className="date-picker-styled-wrap" title="Select specific month">
+                                            <input
+                                                type="month"
+                                                value={execMonthDate}
+                                                onChange={(e) => setExecMonthDate(e.target.value)}
+                                            />
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            className="nav-arrow-btn"
+                                            onClick={handleExecNextMonth}
+                                            title="Next Month"
+                                        >
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+                                        </button>
+                                    </div>
+
+                                    <div className="quick-jump-chips">
+                                        <button
+                                            type="button"
+                                            className={`jump-chip ${execMonthDate === formatLocalMonth(new Date()) ? 'active' : ''}`}
+                                            onClick={handleExecThisMonth}
+                                        >
+                                            This Month
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={handleExecLastMonth}
+                                        >
+                                            Last Month
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {execDateFilterMode === 'custom' && (
+                                <div className="client-filter-controls animate-fade">
+                                    <div className="custom-range-inputs">
+                                        <div className="custom-date-field" title="Start Date">
+                                            <label>From</label>
+                                            <input
+                                                type="date"
+                                                value={execCustomStart}
+                                                onChange={(e) => setExecCustomStart(e.target.value)}
+                                            />
+                                        </div>
+                                        <span className="range-arrow">→</span>
+                                        <div className="custom-date-field" title="End Date">
+                                            <label>To</label>
+                                            <input
+                                                type="date"
+                                                value={execCustomEnd}
+                                                onChange={(e) => setExecCustomEnd(e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="quick-jump-chips">
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={() => handleExecCustomPreset(7)}
+                                        >
+                                            Last 7 Days
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={() => handleExecCustomPreset(14)}
+                                        >
+                                            Last 14 Days
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={() => handleExecCustomPreset(30)}
+                                        >
+                                            Last 30 Days
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="jump-chip"
+                                            onClick={handleExecCustomThisMonth}
+                                        >
+                                            This Month
+                                        </button>
+                                        {(execCustomStart || execCustomEnd) && (
+                                            <button
+                                                type="button"
+                                                className="jump-chip"
+                                                onClick={() => { setExecCustomStart(''); setExecCustomEnd(''); }}
+                                                style={{ color: '#ef4444' }}
+                                            >
+                                                ✕ Clear Range
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
                         <div className="global-stats-row">
                             <div className="g-stat-card">
                                 <label>Total Office Volume</label>
                                 <div className="g-val-row">
-                                    <span className="g-val">₹{(officeStats.totalDisbursement / 100000).toFixed(1)}L</span>
-                                    <span className="g-trend">Total Disbursement</span>
+                                    <span className="g-val">₹{(execOfficeStats.totalDisbursement / 100000).toFixed(1)}L</span>
+                                    <span className="g-trend">
+                                        {execDateFilterMode === 'all' ? 'Total Disbursement' :
+                                         execDateFilterMode === 'month' ? `${getMonthDisplay(execMonthDate)} Disbursement` :
+                                         execDateFilterMode === 'custom' ? 'Selected Period Volume' :
+                                         execDateFilterMode === 'day' ? `${getDayDisplay(execDayDate)} Volume` : 'Weekly Volume'}
+                                    </span>
                                 </div>
                             </div>
                             <div className="g-stat-card">
                                 <label>Leads Captured</label>
                                 <div className="g-val-row">
-                                    <span className="g-val">{officeStats.totalLeads}</span>
-                                    <span className="g-trend">In Funnel</span>
+                                    <span className="g-val">{execOfficeStats.totalLeads}</span>
+                                    <span className="g-trend">
+                                        {execDateFilterMode === 'all' ? 'In Funnel' : `${execOfficeStats.totalDisbursedCount} Disbursed in Period`}
+                                    </span>
                                 </div>
                             </div>
                             <div className="g-stat-card">
                                 <label>Global Conversion</label>
                                 <div className="g-val-row">
                                     <span className="g-val">
-                                        {officeStats.totalLeads > 0 ? ((officeStats.totalDisbursedCount / officeStats.totalLeads) * 100).toFixed(1) : 0}%
+                                        {execOfficeStats.totalLeads > 0 ? ((execOfficeStats.totalDisbursedCount / execOfficeStats.totalLeads) * 100).toFixed(1) : 0}%
                                     </span>
-                                    <span className="g-trend">Avg. Office Rate</span>
+                                    <span className="g-trend">
+                                        {execDateFilterMode === 'all' ? 'Avg. Office Rate' : 'Avg. Period Rate'}
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -984,14 +1457,18 @@ const AdminDashboard = ({ onLogout }) => {
                         <div className="global-activity-section">
                             <div className="section-header">
                                 <h2>Recent Office Activity</h2>
-                                <p>Live feed of client logins and application status across all agents.</p>
+                                <p>
+                                    {execDateFilterMode === 'all'
+                                        ? 'Live feed of client logins and application status across all agents.'
+                                        : `Logins and application status for selected period (${dateMatchedExecLogins.length} records).`}
+                                </p>
                             </div>
                             <div className="activity-list">
-                                {allLogins.slice(0, 10).map(login => (
+                                {dateMatchedExecLogins.slice(0, 10).map(login => (
                                     <div key={login.id} className="activity-row">
                                         <div className="act-main">
                                             <span className="act-client">{login.client_name || 'Anonymous Client'}</span>
-                                            <span className="act-meta">{login.loan_type?.replace('_', ' ')} • ₹{parseFloat(login.salary).toLocaleString()} Salary</span>
+                                            <span className="act-meta">{login.loan_type?.replace('_', ' ')} • ₹{parseFloat(login.salary || 0).toLocaleString()} Salary</span>
                                         </div>
                                         <div className="act-agent">
                                             <span className="act-label">Managed by</span>
@@ -1003,6 +1480,11 @@ const AdminDashboard = ({ onLogout }) => {
                                         </div>
                                     </div>
                                 ))}
+                                {dateMatchedExecLogins.length === 0 && (
+                                    <div className="empty-history" style={{ padding: '2rem', textAlign: 'center' }}>
+                                        <p style={{ color: 'var(--text-muted)' }}>No activity recorded for this period.</p>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
