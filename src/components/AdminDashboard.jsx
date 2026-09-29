@@ -122,6 +122,7 @@ const AdminDashboard = ({ onLogout }) => {
     const [execMonthDate, setExecMonthDate] = useState(() => formatLocalMonth(new Date()));
     const [execCustomStart, setExecCustomStart] = useState('');
     const [execCustomEnd, setExecCustomEnd] = useState('');
+    const [agentSortBy, setAgentSortBy] = useState('performance'); // 'performance', 'conversion', 'volume', 'target', 'leads', 'name'
     const [showNotificationModal, setShowNotificationModal] = useState(false);
     const [notificationForm, setNotificationForm] = useState({ target: 'all', message: '', type: 'info' });
     const [sendingNotification, setSendingNotification] = useState(false);
@@ -873,10 +874,57 @@ const AdminDashboard = ({ onLogout }) => {
             emp.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
             emp.email?.toLowerCase().includes(searchQuery.toLowerCase())
         )
-        .map(emp => ({
-            ...emp,
-            stats: execPerformance[emp.username] || { disbursement: 0, leads: 0, disbursed: 0, follow_up: 0, rejected: 0 }
-        }));
+        .map(emp => {
+            const stats = execPerformance[emp.username] || { disbursement: 0, leads: 0, disbursed: 0, follow_up: 0, rejected: 0 };
+            const conversion = stats.leads > 0 ? (stats.disbursed / stats.leads) * 100 : 0;
+            const targetProgress = emp.target > 0 ? (stats.disbursement / emp.target) * 100 : 0;
+            return {
+                ...emp,
+                stats,
+                conversion,
+                targetProgress
+            };
+        })
+        .sort((a, b) => {
+            if (agentSortBy === 'conversion') {
+                if (Math.abs(b.conversion - a.conversion) > 0.001) {
+                    return b.conversion - a.conversion;
+                }
+                return b.stats.disbursement - a.stats.disbursement;
+            }
+            if (agentSortBy === 'volume') {
+                if (b.stats.disbursement !== a.stats.disbursement) {
+                    return b.stats.disbursement - a.stats.disbursement;
+                }
+                return b.conversion - a.conversion;
+            }
+            if (agentSortBy === 'target') {
+                if (Math.abs(b.targetProgress - a.targetProgress) > 0.001) {
+                    return b.targetProgress - a.targetProgress;
+                }
+                return b.stats.disbursement - a.stats.disbursement;
+            }
+            if (agentSortBy === 'leads') {
+                return b.stats.leads - a.stats.leads;
+            }
+            if (agentSortBy === 'name') {
+                return a.username.localeCompare(b.username);
+            }
+            // Default: 'performance' (Highest conversion rate, then target progress, then disbursement volume, then leads)
+            if (Math.abs(b.conversion - a.conversion) > 0.001) {
+                return b.conversion - a.conversion;
+            }
+            if (Math.abs(b.targetProgress - a.targetProgress) > 0.001) {
+                return b.targetProgress - a.targetProgress;
+            }
+            if (b.stats.disbursement !== a.stats.disbursement) {
+                return b.stats.disbursement - a.stats.disbursement;
+            }
+            if (b.stats.leads !== a.stats.leads) {
+                return b.stats.leads - a.stats.leads;
+            }
+            return a.username.localeCompare(b.username);
+        });
 
     return (
         <div className={`admin-container theme-${theme}`}>
@@ -1028,6 +1076,22 @@ const AdminDashboard = ({ onLogout }) => {
                                 <p>Real-time oversight of branch performance and conversion funnel.</p>
                             </div>
                             <div className="head-actions">
+                                <div className="agent-sort-select-wrap" title="Order agent leaderboard">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                                    <label>Rank By:</label>
+                                    <select
+                                        value={agentSortBy}
+                                        onChange={(e) => setAgentSortBy(e.target.value)}
+                                        className="agent-sort-select"
+                                    >
+                                        <option value="performance">Top Performer (Conversion & Target)</option>
+                                        <option value="conversion">Conversion Rate (High to Low)</option>
+                                        <option value="volume">Disbursement Volume (High to Low)</option>
+                                        <option value="target">Target Progress (High to Low)</option>
+                                        <option value="leads">Total Leads (High to Low)</option>
+                                        <option value="name">Name (A–Z)</option>
+                                    </select>
+                                </div>
                                 <div className="search-box">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
                                     <input
@@ -1383,7 +1447,7 @@ const AdminDashboard = ({ onLogout }) => {
                         </div>
 
                         <div className="employee-grid">
-                            {filteredEmployees.map(emp => (
+                            {filteredEmployees.map((emp, index) => (
                                 <div key={emp.id} className="employee-card interactive" onClick={() => handleEmployeeClick(emp)}>
                                     <div className="emp-top">
                                         <div className="emp-avatar-minimal">
@@ -1391,7 +1455,21 @@ const AdminDashboard = ({ onLogout }) => {
                                             <div className="online-dot"></div>
                                         </div>
                                         <div className="emp-info">
-                                            <h3>{emp.username}</h3>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <h3>{emp.username}</h3>
+                                                {index === 0 && (emp.stats.disbursed > 0 || emp.stats.leads > 0) && (
+                                                    <span className="rank-badge rank-1" title="Rank 1 Top Performer">🏆 #1</span>
+                                                )}
+                                                {index === 1 && (emp.stats.disbursed > 0 || emp.stats.leads > 0) && (
+                                                    <span className="rank-badge rank-2" title="Rank 2">🥈 #2</span>
+                                                )}
+                                                {index === 2 && (emp.stats.disbursed > 0 || emp.stats.leads > 0) && (
+                                                    <span className="rank-badge rank-3" title="Rank 3">🥉 #3</span>
+                                                )}
+                                                {index > 2 && (emp.stats.disbursed > 0 || emp.stats.leads > 0) && (
+                                                    <span className="rank-badge rank-other">#{index + 1}</span>
+                                                )}
+                                            </div>
                                             <span>{emp.email}</span>
                                         </div>
                                         <button className="edit-emp-btn" onClick={(e) => { e.stopPropagation(); setEditingUser(emp); setUserForm({ ...emp }); setShowUserModal(true); }}>
@@ -3248,6 +3326,77 @@ const AdminDashboard = ({ onLogout }) => {
                 .status-pill.rejected { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
                 .status-pill.follow_up { background: rgba(99, 102, 241, 0.1); color: #6366f1; }
                 .act-date { font-size: 0.75rem; color: var(--text-muted); text-align: right; }
+
+                /* Leaderboard Rank & Sort Dropdown */
+                .agent-sort-select-wrap {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    background: var(--input-bg);
+                    border: 1px solid var(--border);
+                    padding: 6px 14px;
+                    border-radius: 12px;
+                    font-size: 0.82rem;
+                    color: var(--text-muted);
+                    transition: border-color 0.2s;
+                }
+                .agent-sort-select-wrap:hover,
+                .agent-sort-select-wrap:focus-within {
+                    border-color: var(--primary);
+                }
+                .agent-sort-select-wrap label {
+                    font-weight: 600;
+                    font-size: 0.72rem;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    color: var(--text-muted);
+                }
+                .agent-sort-select {
+                    background: transparent;
+                    border: none;
+                    color: var(--text);
+                    font-size: 0.82rem;
+                    font-weight: 500;
+                    font-family: 'Outfit', sans-serif;
+                    outline: none;
+                    cursor: pointer;
+                }
+                .agent-sort-select option {
+                    background: #111827;
+                    color: #fff;
+                }
+                .rank-badge {
+                    font-size: 0.68rem;
+                    font-weight: 700;
+                    padding: 2px 7px;
+                    border-radius: 20px;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 3px;
+                    letter-spacing: 0.2px;
+                    white-space: nowrap;
+                }
+                .rank-badge.rank-1 {
+                    background: rgba(245, 158, 11, 0.16);
+                    color: #fbbf24;
+                    border: 1px solid rgba(245, 158, 11, 0.4);
+                    box-shadow: 0 0 10px rgba(245, 158, 11, 0.15);
+                }
+                .rank-badge.rank-2 {
+                    background: rgba(148, 163, 184, 0.16);
+                    color: #cbd5e1;
+                    border: 1px solid rgba(148, 163, 184, 0.4);
+                }
+                .rank-badge.rank-3 {
+                    background: rgba(217, 119, 6, 0.16);
+                    color: #f59e0b;
+                    border: 1px solid rgba(217, 119, 6, 0.35);
+                }
+                .rank-badge.rank-other {
+                    background: rgba(255, 255, 255, 0.04);
+                    color: var(--text-muted);
+                    border: 1px solid var(--border);
+                }
 
                 /* Client Filter Panel Styles */
                 .client-filter-panel {
